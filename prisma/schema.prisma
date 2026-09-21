@@ -1,0 +1,83 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Pairs the user monitors for automated AI scanning + notifications
+model WatchItem {
+  id             String    @id @default(cuid())
+  symbol         String    @unique
+  market         String    @default("CRYPTO") // CRYPTO | FOREX | METAL
+  timeframe      String    @default("1h")
+  active         Boolean   @default(true)
+  lastSignal     String? // LONG | SHORT | KEEP_OFF
+  lastConfidence Int?
+  lastSignalAt   DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+// Every AI analysis ever produced (manual deep-analyze or auto-scanner)
+model SignalRecord {
+  id         String   @id @default(cuid())
+  symbol     String
+  timeframe  String
+  signal     String // LONG | SHORT | KEEP_OFF
+  confidence Int
+  price      Float?
+  entry      Float?
+  entryLow   Float?
+  entryHigh  Float?
+  stopLoss   Float?
+  takeProfit1 Float?
+  takeProfit2 Float?
+  riskReward Float?
+  bias       String?
+  timeHorizon String?
+  summary    String?
+  rationale  String // JSON string[]
+  keyLevels  String? // JSON {support:[], resistance:[]}
+  invalidation String?
+  newsImpact String?
+  indicators String? // JSON snapshot
+  source     String   @default("manual") // manual | scanner | rules
+  createdAt  DateTime @default(now())
+
+  @@index([symbol, createdAt])
+}
+
+// Notification center entries (pushed in realtime over socket.io)
+model Notification {
+  id         String   @id @default(cuid())
+  type       String   @default("SIGNAL") // SIGNAL | SYSTEM
+  symbol     String?
+  title      String
+  body       String?
+  signal     String?
+  confidence Int?
+  link       String?
+  read       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// Key-value app settings (scanner config, alert prefs)
+model AppSetting {
+  key       String   @id
+  value     String // JSON
+  updatedAt DateTime @updatedAt
+}
+
+// Cached news search results per category
+model NewsCache {
+  id        String   @id @default(cuid())
+  category  String   @unique // CRYPTO | FOREX
+  articles  String // JSON
+  sentiment String? // JSON {overall, score, drivers[]}
+  fetchedAt DateTime @default(now())
+}
