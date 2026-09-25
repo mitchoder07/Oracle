@@ -1,7 +1,7 @@
 import type { Candle, Ticker } from './types'
 import { fetchKlines, fetchTickers } from './market-data'
 import { buildSnapshot } from './indicators'
-import { getSymbolMeta } from './markets'
+import { canonicalSymbol, getSymbolMeta } from './markets'
 import { getMarketSession, sessionPromptLine } from './sessions'
 import { searchNews } from './news'
 import { getZAI, visionModel } from './zai'
@@ -27,8 +27,13 @@ Chart image reading (when the user attaches a screenshot):
 - If the image is too small, cropped or blurry to read reliably, say exactly what is unclear instead of guessing.
 
 Market calendar awareness:
-- You are given the current date/time and the FX + gold session status. Respect them: if the FX market is closed for the weekend, say so. Forex prices shown are Friday's close, so flag weekend gap risk and note the market reopens Sunday 5:00 PM ET. Spot gold (XAU/USD) also closes on weekends and reopens Sunday 6:00 PM ET; any gold price shown while spot is closed is the 24/7 PAXG token proxy. Never describe a closed market as "moving right now".
+- You are given the current date/time and the FX + gold session status. Respect them: if the FX market is closed for the weekend, say so. Forex prices shown are Friday's close, so flag weekend gap risk and note the market reopens Sunday 5:00 PM ET. Spot gold (XAU/USD) also closes on weekends and reopens Sunday 6:00 PM ET; gold prices shown while spot is closed are Friday's close, frozen like on any broker platform. Never describe a closed market as "moving right now".
 - Crypto trades 24/7.
+
+When you give a trade view on a pair:
+- Always attach the reasoning: the technical levels that matter, any relevant news headline, and the pattern your 20 years of experience says this setup rhymes with. Never give a bare LONG/SHORT with no why.
+- Always give a validity window: how long the setup stays live and when to cut the trade if the first target is not hit (for example: "if TP1 isn't hit within 8 hours, close at market"). An open-ended trade idea is not professional.
+- When the user asks about a timeframe, relate it to the bigger trend: say whether the 15m call trades with or against the 4h/1d bias.
 
 Style rules:
 - NEVER use em dashes (—) or en dashes (–) anywhere in your replies. Not once. Use a comma, a period or parentheses instead. This is a hard rule that overrides every other style preference.
@@ -49,12 +54,12 @@ export async function chatWithTrader(
   let contextBlock = 'No specific pair is focused right now.'
   if (contextSymbol) {
     try {
-      const symbol = contextSymbol.toUpperCase()
+      const symbol = canonicalSymbol(contextSymbol)
       const meta = getSymbolMeta(symbol)
       const [candles, tickers, news] = await Promise.all([
         fetchKlines(symbol, timeframe ?? '1h', 200),
         fetchTickers([symbol, 'BTCUSDT']),
-        searchNews(meta.market === 'FOREX' ? 'FOREX' : 'CRYPTO').catch(() => []),
+        searchNews(meta.market === 'FOREX' ? 'FOREX' : meta.market === 'METAL' ? 'METAL' : 'CRYPTO').catch(() => []),
       ])
       const ticker: Ticker | undefined = tickers.get(symbol)
       const btc: Ticker | undefined = tickers.get('BTCUSDT')
@@ -72,9 +77,9 @@ export async function chatWithTrader(
         meta.market === 'FOREX' && !session.open
           ? `Market session: FOREX is CLOSED (weekend). Prices below are Friday's close, weekend gap risk applies, and the market reopens Sunday 5:00 PM ET.`
           : meta.market === 'METAL' && !session.open
-            ? `Market session: SPOT GOLD is CLOSED (weekend, reopens Sunday 6:00 PM ET). The price below is the 24/7 PAXG token proxy for XAU/USD; it can drift from spot and thins out on weekends.`
+            ? `Market session: SPOT GOLD is CLOSED (weekend, reopens Sunday 6:00 PM ET). Prices below are Friday's close, frozen like on any broker platform.`
             : meta.market === 'METAL'
-              ? `Market session: Spot gold open (closes Friday 5:00 PM ET); price shown is the PAXG token tracking XAU/USD.`
+              ? `Market session: Spot gold open (closes Friday 5:00 PM ET); price shown is real spot XAU/USD.`
               : `Market session: ${meta.market === 'FOREX' ? 'FOREX open (24/5)' : 'Crypto 24/7, always open'}.`
       contextBlock = `${sessionPromptLine()}
 ${sessionLine}

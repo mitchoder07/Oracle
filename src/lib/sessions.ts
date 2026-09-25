@@ -4,8 +4,8 @@
 // wall clock via Intl). Crypto trades 24/7.
 // Spot gold (XAU/USD) also closes for the weekend: closes Friday 17:00 ET,
 // reopens Sunday 18:00 ET (typical broker/metals-desk hours). Our XAU/USD feed
-// is the PAXG token (24/7 on Binance), so weekend charts still work — but the
-// SPOT market is closed and the scanner must not burn LLM calls on frozen data.
+// is real spot gold, so while the market is closed the chart simply holds
+// Friday's close (exactly what a broker's XAU/USD chart shows on a weekend).
 // Used by the UI (badges/banners), the analysis prompts (so ORACLE knows it's
 // the weekend and prices are Friday's close), and the data layer (staleness
 // rules relax while FX is closed so weekend charts keep working).
@@ -87,7 +87,7 @@ export function getMarketSession(
       return {
         open: false,
         label: 'XAU CLOSED',
-        detail: 'Weekend: reopens Sunday 6:00 PM ET (chart shows the 24/7 PAXG token price)',
+        detail: 'Weekend: reopens Sunday 6:00 PM ET',
         market,
       }
     }
@@ -110,7 +110,7 @@ export function sessionPromptLine(now: Date = new Date()): string {
     ? 'FX market: CLOSED for the weekend (prices are Friday\u2019s close; weekend gap risk applies; reopens Sunday 5:00 PM ET)'
     : 'FX market: OPEN (24/5, closes Friday 5:00 PM ET)'
   const gold = isMetalClosed(now)
-    ? 'GOLD (XAU/USD) spot market: CLOSED for the weekend (reopens Sunday 6:00 PM ET; any XAU price shown is the 24/7 PAXG token proxy, which can drift from spot and thins out on weekends)'
-    : 'GOLD (XAU/USD) spot market: OPEN (closes Friday 5:00 PM ET)'
+    ? 'GOLD (XAU/USD) spot market: CLOSED for the weekend (prices are Friday\u2019s close; weekend gap risk applies; reopens Sunday 6:00 PM ET)'
+    : 'GOLD (XAU/USD) spot market: OPEN (closes Friday 5:00 PM ET; the price is real spot gold, the same XAU/USD a broker quotes)'
   return `CURRENT TIME: ${utc} (${ny.label}). CRYPTO market: OPEN 24/7. ${fx}. ${gold}.`
 }

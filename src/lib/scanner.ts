@@ -83,6 +83,7 @@ export async function recordSignal(
         structure: result.snapshot.trend.structure,
         atrPct: result.snapshot.volatility.atrPct,
         relVolume: result.snapshot.volume.lastVsAvg,
+        validHours: result.ai.validHours,
       }),
       source: result.source === 'rules' ? 'rules' : source,
     },
@@ -118,7 +119,9 @@ export async function recordSignal(
           type: 'SIGNAL',
           symbol,
           title,
-          body: result.ai.summary,
+          body: result.ai.tradeWindow
+            ? `${result.ai.summary} ${result.ai.tradeWindow}`
+            : result.ai.summary,
           signal: result.ai.signal,
           confidence: result.ai.confidence,
         },

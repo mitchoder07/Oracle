@@ -1,6 +1,7 @@
 import type { Candle, Ticker } from './types'
-import { getSymbolMeta, KRAKEN_FOREX_SYMBOLS } from './markets'
+import { canonicalSymbol, getSymbolMeta, KRAKEN_FOREX_SYMBOLS } from './markets'
 import { fetchKlines as fetchKlinesBinance, fetchTickers as fetchTickersBinance } from './binance'
+import { fetchGoldKlines, fetchGoldTicker } from './gold'
 import { isForexClosed } from './sessions'
 
 // ─── Source-routing market data façade ───────────────────────────────────────
@@ -124,32 +125,41 @@ async function fetchKrakenTicker(symbol: string): Promise<Ticker | null> {
 
 // ── public façade used across the app ──
 
-export async function fetchKlines(symbol: string, interval: string, limit = 300): Promise<Candle[]> {
-  const sym = symbol.toUpperCase()
-  const meta = getSymbolMeta(sym)
+export async function fetchKlines(symbolInput: string, interval: string, limit = 300): Promise<Candle[]> {
+  const symbol = canonicalSymbol(symbolInput)
+  const meta = getSymbolMeta(symbol)
   if (meta.source === 'kraken') {
-    return fetchKrakenKlines(sym, interval, limit)
+    return fetchKrakenKlines(symbol, interval, limit)
   }
-  return fetchKlinesBinance(sym, interval, limit)
+  if (meta.source === 'gold') {
+    return fetchGoldKlines(symbol, interval, limit)
+  }
+  return fetchKlinesBinance(symbol, interval, limit)
 }
 
 export async function fetchTickers(symbols: string[]): Promise<Map<string, Ticker>> {
   if (symbols.length === 0) return new Map()
-  const upper = symbols.map((s) => s.toUpperCase())
+  const upper = symbols.map((s) => canonicalSymbol(s))
   const cacheKey = upper.slice().sort().join(',')
   const hit = tickerCache.get(cacheKey)
   if (hit && hit.expires > Date.now()) return hit.map
 
   const krakenSyms = upper.filter((s) => getSymbolMeta(s).source === 'kraken')
-  const binanceSyms = upper.filter((s) => getSymbolMeta(s).source !== 'kraken')
+  const goldSyms = upper.filter((s) => getSymbolMeta(s).source === 'gold')
+  const binanceSyms = upper.filter((s) => {
+    const src = getSymbolMeta(s).source
+    return src !== 'kraken' && src !== 'gold'
+  })
 
-  const [binanceMap, krakenMaps] = await Promise.all([
+  const [binanceMap, krakenMaps, goldTickers] = await Promise.all([
     binanceSyms.length > 0 ? fetchTickersBinance(binanceSyms) : Promise.resolve(new Map<string, Ticker>()),
     Promise.all(krakenSyms.map((s) => fetchKrakenTicker(s))),
+    Promise.all(goldSyms.map(() => fetchGoldTicker())),
   ])
 
   const out = new Map(binanceMap)
   for (const t of krakenMaps) if (t) out.set(t.symbol, t)
+  for (const t of goldTickers) if (t) out.set(t.symbol, t)
 
   if (out.size > 0) tickerCache.set(cacheKey, { map: out, expires: Date.now() + 10_000 })
   return out
@@ -157,7 +167,7 @@ export async function fetchTickers(symbols: string[]): Promise<Map<string, Ticke
 
 export async function fetchTicker(symbol: string): Promise<Ticker | null> {
   const m = await fetchTickers([symbol])
-  return m.get(symbol.toUpperCase()) ?? null
+  return m.get(canonicalSymbol(symbol)) ?? null
 }
 
 // all forex symbols (used by the hub to subscribe Kraken WS tickers)

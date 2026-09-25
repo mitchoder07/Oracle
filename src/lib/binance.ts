@@ -26,13 +26,12 @@ const INTERVAL_MAP: Record<string, { binance: string; bybit: string; okx: string
   '1M': { binance: '1M', bybit: 'M', okx: '1M', kraken: 1440 },
 }
 
-// Binance symbol → Kraken pair (fiat forex + gold have dedicated mappings)
+// Binance symbol → Kraken pair (fiat forex pairs have dedicated mappings)
 const KRAKEN_PAIR_MAP: Record<string, string> = {
   EURUSDT: 'EURUSD',
   EURUSDC: 'EURUSD',
   GBPUSDT: 'GBPUSD',
   AUDUSDT: 'AUDUSD',
-  PAXGUSDT: 'PAXGUSD',
 }
 
 // ── ban tracking ──

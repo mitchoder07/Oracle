@@ -445,7 +445,7 @@ export function ChartPanel({ analysis, analyzing }: Props) {
           <MoonStar className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           <span>
             {meta.market === 'METAL'
-              ? `Spot gold (XAU) is closed for the weekend (${session.detail}). The chart shows the 24/7 PAXG token price, a close proxy for spot gold.`
+              ? `Spot gold (XAU/USD) is closed for the weekend (${session.detail}). Prices are frozen at Friday's close, just like on a broker's gold chart. Weekend gap risk applies.`
               : `The FX market is closed for the weekend, so prices are Friday's close. ${session.detail}. Weekend gap risk applies.`}
           </span>
         </div>
@@ -454,16 +454,22 @@ export function ChartPanel({ analysis, analyzing }: Props) {
       {/* chart area */}
       <div className="relative min-h-[340px] flex-1 sm:min-h-[420px]">
         <div ref={containerRef} className="absolute inset-0" aria-label={`${meta.displaySymbol} candlestick chart`} />
-        {/* real-data provenance badge: every candle comes straight from the exchange */}
+        {/* real-data provenance badge: every candle comes straight from the market */}
         <div
           className="pointer-events-none absolute left-2 top-2 z-10 flex items-center gap-1.5 rounded-md border border-emerald-500/20 bg-zinc-950/70 px-2 py-0.5 text-[10px] font-semibold text-emerald-400 backdrop-blur-sm"
-          title={`Real exchange data streamed live from ${meta.source === 'kraken' ? 'Kraken' : 'Binance'}. The same prices you would see on the exchange's own website. Nothing on this chart is simulated.`}
+          title={
+            meta.source === 'gold'
+              ? 'Real spot gold. The live price is the true XAU/USD spot rate; candle history is COMEX gold re-anchored to spot, so levels match a broker gold chart. Nothing on this chart is simulated.'
+              : meta.source === 'kraken'
+                ? 'Real exchange data streamed live from Kraken. The same prices you would see on the exchange\u2019s own website. Nothing on this chart is simulated.'
+                : 'Real exchange data streamed live from Binance. The same prices you would see on the exchange\u2019s own website. Nothing on this chart is simulated.'
+          }
         >
           <span className="relative flex h-1.5 w-1.5">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
           </span>
-          LIVE · {meta.source === 'kraken' ? 'Kraken' : meta.market === 'METAL' ? 'Binance PAXG' : 'Binance'}
+          LIVE · {meta.source === 'gold' ? 'Spot XAU/USD' : meta.source === 'kraken' ? 'Kraken' : 'Binance'}
         </div>
         {loading && (
           <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/60 backdrop-blur-[1px]">
@@ -500,9 +506,11 @@ export function ChartPanel({ analysis, analyzing }: Props) {
         </span>
         <span className="hidden sm:inline">
           {session.open
-            ? 'Real exchange data, updating in realtime'
+            ? meta.source === 'gold'
+              ? 'Real spot gold, updating in realtime'
+              : 'Real exchange data, updating in realtime'
             : meta.market === 'METAL'
-              ? 'Spot market closed. Weekend candles are thin PAXG token trading'
+              ? 'Spot market closed. Prices are frozen at Friday\u2019s close'
               : 'Market closed. Candles are frozen at Friday\u2019s close'}
         </span>
         {tzLabel && <span className="hidden md:inline text-zinc-600">· Times shown in your timezone ({tzLabel})</span>}

@@ -1,18 +1,20 @@
 import type { SymbolMeta } from './types'
 
 // ─── Tradable universe ────────────────────────────────────────────────────────
-// Crypto + gold → Binance market-data mirror (WS + REST)
+// Crypto → Binance market-data mirror (WS + REST)
 // Fiat forex majors → Kraken (WS v2 + REST) — the real FX market
+// Gold → real spot XAU/USD (live spot price + spot-anchored candles), see
+//   src/lib/gold.ts. NOT a token: levels match a broker XAU/USD chart.
 // (Binance delisted its GBPUSDT/AUDUSDT/USDTNGN fiat pairs, so Kraken serves
 //  the fiat side natively.)
 
 interface RawMeta {
-  symbol: string          // internal symbol id, e.g. BTCUSDT / GBPUSD
+  symbol: string          // internal symbol id, e.g. BTCUSDT / GBPUSD / XAUUSD
   name: string
   market: 'CRYPTO' | 'FOREX' | 'METAL'
-  display: string         // e.g. BTC/USDT or GBP/USD
+  display: string         // e.g. BTC/USDT or GBP/USD or XAU/USD
   digits: number
-  source: 'binance' | 'kraken'
+  source: 'binance' | 'kraken' | 'gold'
   krakenWs?: string       // Kraken WS v2 symbol, e.g. "GBP/USD"
 }
 
@@ -66,8 +68,8 @@ const RAW: RawMeta[] = [
   { symbol: 'USDCHF', name: 'US Dollar / Swiss Franc', market: 'FOREX', display: 'USD/CHF', digits: 5, source: 'kraken', krakenWs: 'USD/CHF' },
   { symbol: 'EURGBP', name: 'Euro / British Pound', market: 'FOREX', display: 'EUR/GBP', digits: 5, source: 'kraken', krakenWs: 'EUR/GBP' },
   { symbol: 'EURJPY', name: 'Euro / Japanese Yen', market: 'FOREX', display: 'EUR/JPY', digits: 3, source: 'kraken', krakenWs: 'EUR/JPY' },
-  // ── Gold (Binance PAXG — tokenised XAU) ──
-  { symbol: 'PAXGUSDT', name: 'Gold (PAXG)', market: 'METAL', display: 'XAU/USD', digits: 2, source: 'binance' },
+  // ── Gold (real spot XAU/USD, the forex metal) ──
+  { symbol: 'XAUUSD', name: 'Gold Spot / US Dollar', market: 'METAL', display: 'XAU/USD', digits: 2, source: 'gold' },
 ]
 
 export const SYMBOL_UNIVERSE: SymbolMeta[] = RAW.map((r) => {
@@ -113,7 +115,7 @@ export const DEFAULT_WATCHLIST = [
   'EURUSD',
   'GBPUSD',
   'USDJPY',
-  'PAXGUSDT',
+  'XAUUSD',
 ]
 
 export const TIMEFRAMES = [
@@ -137,6 +139,16 @@ export const HTF_MAP: Record<string, string> = {
   '1d': '1w',
   '1w': '1M',
   '1M': '1M', // no higher timeframe — callers must skip self-mapped
+}
+
+// legacy symbol → current symbol (rows persisted in older DBs)
+export const LEGACY_SYMBOL_MAP: Record<string, string> = {
+  PAXGUSDT: 'XAUUSD', // gold used to be the PAXG token; now real spot XAU/USD
+}
+
+export function canonicalSymbol(symbol: string): string {
+  const s = symbol.toUpperCase()
+  return LEGACY_SYMBOL_MAP[s] ?? s
 }
 
 export function isValidSymbol(symbol: string): boolean {

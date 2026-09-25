@@ -241,7 +241,7 @@ export function TerminalShell() {
             carry risk; never trade blind.
           </p>
           <p className="num shrink-0 text-[10px] text-zinc-600">
-            Data: Binance · Kraken live feeds · ORACLE analysis engine
+            Data: Binance · Kraken · live spot gold (XAU/USD) · ORACLE analysis engine
           </p>
         </div>
           </footer>

@@ -1,7 +1,7 @@
 import type { AISignal, AnalysisResult, TechnicalSnapshot } from './types'
 import { fetchKlines, fetchTickers } from './market-data'
 import { buildSnapshot, rulesSignal } from './indicators'
-import { getSymbolMeta, HTF_MAP } from './markets'
+import { canonicalSymbol, getSymbolMeta, HTF_MAP } from './markets'
 import { getMarketSession, sessionPromptLine } from './sessions'
 import { searchSymbolNews } from './news'
 import { extractJson } from './news'
@@ -12,18 +12,19 @@ import { getZAI } from './zai'
 const SYSTEM_PROMPT = `You are ORACLE, an elite institutional-grade trading analyst with 20+ years of experience across crypto and forex markets. You have digested every major market cycle, crash, mania and consolidation since the dot-com era and combine:
 
 - Deep technical analysis: market structure (HH/HL vs LH/LL), EMA dynamics, RSI & divergences, MACD momentum, Bollinger volatility regimes, ATR-based risk sizing, volume/OBV confirmation, candlestick patterns.
-- Multi-timeframe confluence: you always check that the trading timeframe agrees with the higher timeframe bias.
-- News & macro awareness: you weigh how headlines, sentiment and risk-on/risk-off flows affect the setup.
-- Merciless risk management: every trade idea must have a logical invalidation point, stop placement beyond structure (not at round numbers), and asymmetric R:R of at least 1.5.
+- Multi-timeframe confluence: you always check that the trading timeframe agrees with the higher timeframe bias, and you say out loud how the two fit together.
+- News & macro awareness: you weigh how headlines, sentiment and risk-on/risk-off flows affect the setup, and you cite the specific headline when you use it.
+- Pattern memory from experience: you have seen thousands of similar setups (first pullback to a rising 20 EMA, failed breakout after a vertical run, liquidity sweep before a real move) and you reference that experience explicitly.
+- Merciless risk management: every trade idea must have a logical invalidation point, stop placement beyond structure (not at round numbers), asymmetric R:R of at least 1.5, and a defined validity window after which the trade is cut.
 
 Your personality: decisive, calm, honest and human. You sound like a veteran trader a friend can trust, not a corporate report. A sloppy chart gets called out. "KEEP_OFF" (no trade) is frequently the smartest and most professional call. You never force trades. You think like a senior portfolio manager protecting capital first, chasing alpha second.
 
-WRITING STYLE (applies to every text field you write: summary, rationale, invalidation, newsImpact, riskWarning):
+WRITING STYLE (applies to every text field you write: summary, rationale, invalidation, newsImpact, experienceNote, mtfView, tradeWindow, riskWarning):
 - NEVER use em dashes (—) or en dashes (–). Not once. Use a comma, a period or parentheses instead. This is a hard rule.
 - Write the way a real human trader talks: natural, warm, plain English. Contractions are welcome ("don't", "it's", "you're"). Everyday words beat jargon when both work.
 - No stiff AI phrasing, no hype words, no filler. Every sentence should earn its place and be grounded in the actual numbers from the snapshot.
 
-TASK: You will receive a quantitative snapshot of a chart (indicators, structure, levels, recent candles), plus recent news headlines. Give your professional verdict.
+TASK: You will receive a quantitative snapshot of a chart (indicators, structure, levels, recent candles), the higher-timeframe trend for confluence, plus recent news headlines. Give your professional verdict.
 
 Respond with ONLY one valid JSON object. No markdown fences, no commentary before or after. Schema:
 {
@@ -37,15 +38,23 @@ Respond with ONLY one valid JSON object. No markdown fences, no commentary befor
   "takeProfit2": <number or null>,
   "riskReward": <number or null>,
   "timeHorizon": "intraday" | "swing" | "position",
+  "validHours": <integer, how many hours the setup stays valid>,
+  "tradeWindow": "<one sentence: when to enter and when to cut the trade if TP1 is not hit>",
+  "mtfView": "<one sentence: how this timeframe's call fits the higher timeframe trend>",
+  "experienceNote": "<one or two sentences: the pattern/experience from 20 years of trading that backs this call>",
   "summary": "<1-2 sentence verdict, direct and specific>",
   "rationale": ["<bullet>", "<bullet>", "<bullet>"],
   "invalidation": "<what would flip this view>",
-  "newsImpact": "<how current news affects this setup, or 'neutral'>",
+  "newsImpact": "<how a specific current headline affects this setup, or 'neutral'>",
   "riskWarning": "<key risk to this trade>"
 }
 Rules:
-- rationale must contain 3-6 specific, technical bullets that reference actual numbers from the snapshot.
-- For LONG: stopLoss < entry < takeProfit1 < takeProfit2. For SHORT: reverse. All levels must be within 10% of current price and consistent with ATR and the key levels provided. For KEEP_OFF: entry/stopLoss/takeProfits/riskReward must be null.
+- rationale must contain 4-6 specific bullets that reference actual numbers from the snapshot. At least one bullet must cite technical structure/levels, and when news headlines are provided at least one must tie to a headline.
+- MULTI-TIMEFRAME COHERENCE: the snapshot's trend.htfTrend field is the higher-timeframe trend (its timeframe is stated in the prompt). If your call FIGHTS the higher-timeframe trend, you must say so in mtfView, cap confidence at 45, and frame the trade as a counter-trend play with reduced size. If the trading timeframe and higher timeframe agree, say so and let confidence reflect the confluence. A call that silently contradicts the bigger trend without acknowledging it is a failure.
+- experienceNote must name a concrete recurring pattern (for example: pullback-to-EMA continuation, failed breakout retest, RSI divergence at range extremes, news-spike fade) and why it applies here. No vague "experience says".
+- validHours must match the timeframe's realistic play-out speed: roughly 2-6h for 1m/5m charts, 6-24h for 15m/30m, 12-48h for 1h, 2-7 days for 4h, 1-4 weeks for 1d, and several weeks/months for 1w/1M.
+- tradeWindow must give the trader a hard cut rule, for example: "Enter on the retest; if TP1 isn't hit within 8 hours, close at market and reassess." Never leave a trade open-ended.
+- For LONG: stopLoss < entry < takeProfit1 < takeProfit2. For SHORT: reverse. All levels must be within 10% of current price and consistent with ATR and the key levels provided. For KEEP_OFF: entry/stopLoss/takeProfits/riskReward/validHours must be null, and tradeWindow should still tell the trader when to look again.
 - confidence reflects the conviction in your call: >70 only for strong multi-factor confluence; 40-70 for decent setups; <40 for weak/categorical no-trade zones. For KEEP_OFF, confidence = how strongly you urge the trader to stay out (a high-confidence KEEP_OFF is a very loud "do not trade").
 - Numbers must be plausible to the given price scale (no typo-level absurdities).`
 
@@ -57,7 +66,7 @@ export async function analyzeSymbol(
   timeframe: string,
   opts: { force?: boolean } = {}
 ): Promise<AnalysisResult> {
-  const symbol = symbolInput.toUpperCase()
+  const symbol = canonicalSymbol(symbolInput)
   const key = `an:${symbol}:${timeframe}`
   if (!opts.force) {
     const hit = resultCache.get(key)
@@ -87,7 +96,7 @@ export async function analyzeSymbol(
   } catch { /* news is best-effort */ }
 
   // 4) LLM verdict (with rules-engine fallback)
-  const { ai, source } = await callOracle(snapshot, newsHeadlines)
+  const { ai, source } = await callOracle(snapshot, newsHeadlines, htfTf)
 
   const result: AnalysisResult = {
     symbol,
@@ -116,17 +125,23 @@ function sessionNoteFor(symbol: string): string {
     return 'SESSION NOTE: FX market is currently open (24/5).'
   }
   if (meta.market === 'METAL' && !session.open) {
-    return 'SESSION NOTE: This is gold (XAU/USD) and the SPOT metals market is CLOSED right now (weekend, reopens Sunday 18:00 ET). The price shown comes from the PAXG token, a 24/7 crypto proxy that tracks spot gold closely but can drift and thins out on weekends. Treat the chart as Friday\u2019s close plus thin weekend token trading. Weigh weekend gap risk and consider KEEP_OFF or a plan conditional on the Sunday 18:00 ET spot reopen.'
+    return 'SESSION NOTE: This is gold (XAU/USD) and the SPOT metals market is CLOSED right now (weekend, reopens Sunday 18:00 ET). The prices shown are Friday\u2019s close, exactly like a broker\u2019s gold chart on a weekend. Nothing is moving. Weigh weekend gap risk and headline risk into confidence. A KEEP_OFF with gap-risk rationale is often the most professional call, or present a plan conditional on the Sunday 18:00 ET reopen. Never describe the market as \u201cmoving right now\u201d.'
   }
   if (meta.market === 'METAL') {
-    return 'SESSION NOTE: Spot gold market is currently open (closes Friday 17:00 ET); the price shown is the PAXG token tracking spot XAU/USD.'
+    return 'SESSION NOTE: Spot gold market is currently open (closes Friday 17:00 ET); the price is real spot XAU/USD, the same gold price a forex broker quotes.'
   }
   return 'SESSION NOTE: Crypto trades 24/7, so the market is open right now.'
 }
 
+// realistic validity windows per timeframe (rules fallback mirrors the LLM rule)
+const FALLBACK_VALID_HOURS: Record<string, number> = {
+  '1m': 3, '5m': 6, '15m': 12, '30m': 18, '1h': 24, '4h': 96, '1d': 336, '1w': 720, '1M': 720,
+}
+
 async function callOracle(
   snapshot: TechnicalSnapshot,
-  newsHeadlines: string[]
+  newsHeadlines: string[],
+  htfTf: string
 ): Promise<{ ai: AISignal; source: 'llm' | 'rules' | 'llm-repaired' }> {
   const userPrompt = `CURRENT TIME & MARKET SESSION:
 ${sessionPromptLine()}
@@ -134,6 +149,8 @@ ${sessionNoteFor(snapshot.symbol)}
 
 CHART SNAPSHOT (${snapshot.symbol}, ${snapshot.timeframe} timeframe):
 ${JSON.stringify(snapshot, null, 1)}
+
+HIGHER-TIMEFRAME CONTEXT: the trend.htfTrend field above is the ${htfTf} trend. Your ${snapshot.timeframe} verdict must state how it fits that ${htfTf} bias in mtfView, and follow the multi-timeframe coherence rule.
 
 RECENT NEWS HEADLINES:
 ${newsHeadlines.length ? newsHeadlines.map((h, i) => `${i + 1}. ${h}`).join('\n') : '(none available)'}
@@ -164,6 +181,12 @@ Give your professional verdict as the JSON object per the schema.`
   // deterministic fallback — app never breaks
   const fb = rulesSignal(snapshot)
   const meta = getSymbolMeta(snapshot.symbol)
+  const validHours = fb.signal === 'KEEP_OFF' ? null : (FALLBACK_VALID_HOURS[snapshot.timeframe] ?? 24)
+  const htf = snapshot.trend.htfTrend ?? 'unknown'
+  const aligns =
+    (fb.signal === 'LONG' && htf === 'bullish') || (fb.signal === 'SHORT' && htf === 'bearish')
+  const fights =
+    (fb.signal === 'LONG' && htf === 'bearish') || (fb.signal === 'SHORT' && htf === 'bullish')
   return {
     ai: {
       signal: fb.signal,
@@ -176,6 +199,23 @@ Give your professional verdict as the JSON object per the schema.`
       takeProfit2: fb.signal === 'KEEP_OFF' ? null : computeFallbackTp(fb.signal, snapshot, 2.5),
       riskReward: 1.8,
       timeHorizon: 'swing',
+      validHours,
+      tradeWindow:
+        fb.signal === 'KEEP_OFF'
+          ? `Conditions are mixed. Re-check this pair after the next few ${snapshot.timeframe} candles close.`
+          : `Treat the setup as live for the next ${validHours}h. If TP1 is not reached within ${Math.round((validHours ?? 24) * 0.75)}h, close the position at market and wait for a cleaner setup.`,
+      mtfView:
+        fb.signal === 'KEEP_OFF'
+          ? `The ${htfTf} trend reads ${htf}; the ${snapshot.timeframe} picture is mixed, so there is no edge either way right now.`
+          : fights
+            ? `Heads up: this ${snapshot.timeframe} ${fb.signal} fights the ${htfTf} trend (${htf}). Treat it as a counter-trend scalp with reduced size, or skip it.`
+            : aligns
+              ? `This ${snapshot.timeframe} ${fb.signal} trades with the ${htfTf} trend (${htf}), which is the side you want to be on.`
+              : `The ${htfTf} trend reads ${htf}; this ${snapshot.timeframe} call is neutral to it.`,
+      experienceNote:
+        fb.signal === 'KEEP_OFF'
+          ? 'Choppy, indicator-heavy conditions like this are where beginners bleed out. The veteran move is to wait for the range to resolve before committing money.'
+          : 'The rules engine matched this setup to a classic trend-continuation template: momentum in the trade direction, structure intact, and volatility room to the first target. When any leg of that tripod breaks, the trade stops working.',
       summary: `${meta.displaySymbol} ${snapshot.timeframe}: rules engine reads ${
         fb.signal === 'KEEP_OFF' ? 'mixed conditions, so stand aside' : fb.signal === 'LONG' ? 'bullish confluence' : 'bearish confluence'
       }. (AI model unavailable, deterministic engine verdict.)`,
@@ -284,6 +324,19 @@ function sanitizeSignal(parsed: any, snap: TechnicalSnapshot): AISignal | null {
     : []
   if (rationale.length === 0) rationale.push('Verdict based on the aggregate technical snapshot.')
 
+  // validity window: keep the LLM's number when it is sane for the timeframe
+  let validHours: number | null = null
+  if (signal !== 'KEEP_OFF') {
+    const v = Number(parsed.validHours)
+    const floor = FALLBACK_VALID_HOURS[snap.timeframe] ? FALLBACK_VALID_HOURS[snap.timeframe] / 6 : 0.5
+    const ceil = FALLBACK_VALID_HOURS[snap.timeframe] ? FALLBACK_VALID_HOURS[snap.timeframe] * 4 : 336
+    validHours = Number.isFinite(v) && v > 0 ? Math.max(Math.round(v), Math.round(floor)) : FALLBACK_VALID_HOURS[snap.timeframe] ?? 24
+    if (validHours > ceil * 4) validHours = Math.round(ceil)
+  }
+  const tradeWindow = String(parsed.tradeWindow ?? '').trim()
+  const mtfView = String(parsed.mtfView ?? '').trim()
+  const experienceNote = String(parsed.experienceNote ?? '').trim()
+
   const levels = {
     support: Array.isArray(parsed.keyLevels?.support)
       ? parsed.keyLevels.support.map(Number).filter(Number.isFinite).slice(0, 3)
@@ -304,6 +357,16 @@ function sanitizeSignal(parsed: any, snap: TechnicalSnapshot): AISignal | null {
     takeProfit2,
     riskReward: riskReward ?? null,
     timeHorizon: ['intraday', 'swing', 'position'].includes(parsed.timeHorizon) ? parsed.timeHorizon : 'swing',
+    validHours,
+    tradeWindow:
+      tradeWindow.slice(0, 300) ||
+      (signal === 'KEEP_OFF'
+        ? 'No trade. Re-check after the next few candles close.'
+        : `Setup is live for the next ${validHours}h. If TP1 is not hit within ${Math.round((validHours ?? 24) * 0.75)}h, close at market.`),
+    mtfView: mtfView.slice(0, 300) || 'Higher-timeframe context was not provided for this scan.',
+    experienceNote:
+      experienceNote.slice(0, 400) ||
+      'No specific historical analogue was cited for this verdict; treat it as a fresh technical read.',
     summary: String(parsed.summary ?? '').slice(0, 400) || 'No summary provided.',
     rationale,
     keyLevels: levels,

@@ -7,7 +7,7 @@ import { getSymbolMeta, formatPrice } from '@/lib/markets'
 // ─── Scrolling ticker tape ───────────────────────────────────────────────────
 
 const TAPE_SYMBOLS = [
-  'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT', 'DOGEUSDT', 'PAXGUSDT',
+  'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT', 'DOGEUSDT', 'XAUUSD',
   'EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'USDCHF',
 ]
 

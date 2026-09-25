@@ -2,18 +2,16 @@
 
 > ## Already deployed? Apply this update (2 minutes)
 >
-> This package includes the **Sep 25, 2026 polish update**:
-> - Chart times now render in **your own timezone** (was UTC, which read one hour late if you're in UTC+1)
-> - A **LIVE · Kraken / LIVE · Binance** badge on the chart showing exactly which exchange every candle comes from (real market data, nothing simulated)
-> - AI writing de-robotized: **no more em dashes**, natural human wording everywhere (chat replies and verdicts)
-> - Professional `info` icon before "WHY" in the verdict panel
+> This package includes the **real spot gold + smarter predictions update** (Sep 25, 2026, second batch):
+> - **Gold is now REAL spot XAU/USD**, the metal your broker quotes. It is no longer the PAXG crypto token. The live price comes from a real spot-gold feed and the candle history is COMEX gold re-anchored to that spot price, so the chart levels match what you see on your broker's XAU/USD chart. Existing watchlists migrate automatically (PAXGUSDT rows become XAUUSD).
+> - **Predictions got a memory and a clock.** Every verdict now tells you: why (technicals + the actual news headline + the recurring pattern 20 years of trading says this setup rhymes with), how it fits the **higher timeframe** trend (so a 15m call no longer looks like it randomly contradicts the 1h call, it explains itself), and a **trade window**: how long the setup stays valid and when to cut the trade if TP1 is not hit.
 >
 > To update your existing GitHub + Vercel deployment:
 > 1. Unzip this package **over your existing project folder** (keep your `.git` folder and `.env` file, they are not inside the zip).
 > 2. In VSCode's terminal:
 >    ```bash
 >    git add .
->    git commit -m "chart timezone fix, live data badge, natural AI wording"
+>    git commit -m "real spot gold XAUUSD, predictions with reasons + trade windows"
 >    git push
 >    ```
 > 3. Vercel redeploys automatically (watch it under Deployments). Done.
@@ -162,6 +160,7 @@ git push -u origin main
 | `AI_API_KEY` | your Z.ai key | ✅ |
 | `AI_CHAT_MODEL` | `glm-4.6` (or `glm-4-flash`) | optional |
 | `AI_VISION_MODEL` | `glm-4.5v` | optional |
+| `TWELVE_DATA_API_KEY` | free key from https://twelvedata.com - upgrades gold candles to Twelve Data's true spot XAU/USD history | optional |
 | `APP_PASSWORD` | any strong password - puts the whole site behind a login prompt | recommended |
 | `CRON_SECRET` | random string - locks the cron endpoint | recommended |
 
@@ -221,8 +220,16 @@ vercel --prod             # redeploy so the vars take effect
 | **Gold XAU/USD (spot)** | **Sun 6:00 PM ET → Fri 5:00 PM ET** | **weekend** |
 
 - While FX is closed: forex pairs are flagged CLOSED, charts freeze at Friday's close (data accepted as fresh), the scanner skips them, and the AI is explicitly told the market is closed so it never says "it's moving right now".
-- While gold is closed: XAU/USD shows **XAU CLOSED** + a "spot closed" tag. The chart still works - it displays the **PAXG token**, a 24/7 crypto asset that tracks spot gold closely (it can drift a little and thins out on weekends). The AI is told this explicitly too.
+- While gold is closed: XAU/USD shows **XAU CLOSED** + a "spot closed" tag. Prices are frozen at Friday's close, exactly like a broker's gold chart on a weekend. The AI is told this explicitly too.
 - All times are DST-safe (computed from the real `America/New_York` wall clock, not fixed UTC offsets).
+
+### Where the gold numbers come from (all real market data)
+
+- **Live price**: a real spot-gold feed (gold-api.com, keyless, updated every few seconds). Your browser polls it directly, the same way it holds the Binance/Kraken WebSocket connections.
+- **Candle history**: COMEX gold futures re-anchored to that live spot price. Intraday, COMEX tracks spot tick for tick; shifting the whole series by the live spot-minus-futures basis puts every candle at true spot levels, and the newest candle closes exactly on the live spot price. The chart shape and levels match what you'd see on your broker's XAU/USD chart.
+- **Optional upgrade**: set `TWELVE_DATA_API_KEY` (free at twelvedata.com, 800 calls/day) and gold candles come straight from Twelve Data's true spot XAU/USD history instead.
+- **Emergency fallback**: if the candle sources are unreachable, PAXG token candles re-anchored to live spot keep the chart alive (real traded data, correct levels) rather than showing an error.
+- Gold candles are cached server-side per timeframe, so the data sources see very little traffic and never rate-limit a normal user.
 
 ---
 
@@ -236,7 +243,7 @@ vercel --prod             # redeploy so the vars take effect
 6. **Vercel function duration limits.** Routes are capped deliberately: chat 120s, analysis 120s, scanner 300s (the Hobby-plan maximum with fluid compute). A scan of 10 pairs comfortably fits; the scanner state self-heals if an invocation dies.
 7. **Cron frequency on Hobby is once per day** - that's why client-driven scanning is the primary loop, not the cron.
 8. **Your deployed site is public by default** - anyone who finds the URL could burn your AI credits. Set `APP_PASSWORD` (whole-site basic auth) and `CRON_SECRET` (locks the cron endpoint).
-9. **Gold ≠ crypto.** XAU/USD previously traded "24/7" because it used the PAXG token feed. Now the spot market correctly closes Fri 5 PM → Sun 6 PM ET everywhere: badges, banners, scanner skips, and AI prompts.
+9. **Gold ≠ a token.** XAU/USD used the PAXG crypto token as a proxy, which trades at a premium to spot and follows crypto-market swings. Gold is now real spot XAU/USD: live spot price + spot-anchored COMEX candles (see the gold data section above), and the spot market correctly closes Fri 5 PM → Sun 6 PM ET everywhere: badges, banners, scanner skips, and AI prompts.
 10. **Model names differ between sandbox and public API.** The public Z.ai API needs an explicit model per call - this build sends `glm-4.6` / `glm-4.5v` (configurable via env). `glm-4-flash` is the budget option.
 11. **News without a gateway.** The sandbox web-search function doesn't exist on the public API either. News now falls back to keyless public RSS feeds (CoinDesk, Cointelegraph, Investing.com forex & commodities, WSJ) - verified reachable from datacenter IPs, so it works on Vercel. LLM sentiment classification runs on top; if the LLM is unavailable, a keyword heuristic keeps the sentiment banner alive.
 12. **Prisma + Neon pooler.** The app connects through the pooled endpoint (correct for serverless), while `prisma db push` uses the direct one - mixing them up is the #1 cause of weird `prepared statement` errors. Both strings are in `.env.example` and documented above.

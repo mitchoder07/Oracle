@@ -3,14 +3,14 @@
 export type MarketCategory = 'CRYPTO' | 'FOREX' | 'METAL'
 
 export interface SymbolMeta {
-  symbol: string          // e.g. BTCUSDT / GBPUSD
+  symbol: string          // e.g. BTCUSDT / GBPUSD / XAUUSD
   base: string            // e.g. BTC
   quote: string           // e.g. USDT
   name: string            // e.g. Bitcoin
   market: MarketCategory
-  displaySymbol: string   // e.g. BTC/USDT or EUR/USD
+  displaySymbol: string   // e.g. BTC/USDT or EUR/USD or XAU/USD
   tickDigits: number      // decimals for price display
-  source: 'binance' | 'kraken'
+  source: 'binance' | 'kraken' | 'gold'
   krakenWs?: string       // Kraken WS v2 symbol, e.g. "GBP/USD"
 }
 
@@ -115,6 +115,10 @@ export interface AISignal {
   takeProfit2: number | null
   riskReward: number | null
   timeHorizon: string                 // intraday | swing | position
+  validHours: number | null           // how long the setup stays valid (hours)
+  tradeWindow: string                 // human note: when to cut if TP1 isn't hit
+  mtfView: string                     // how this timeframe fits the higher timeframe
+  experienceNote: string              // veteran pattern/experience behind the call
   summary: string
   rationale: string[]
   keyLevels: KeyLevels

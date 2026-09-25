@@ -1,6 +1,6 @@
 'use client'
 
-import { AlertTriangle, Brain, Info, RefreshCw, Shield, Target, Zap } from 'lucide-react'
+import { AlertTriangle, Brain, History, Info, Layers, RefreshCw, Shield, Target, Timer, Zap } from 'lucide-react'
 import { useTerminal, signalBg } from './store'
 import { formatPrice, getSymbolMeta } from '@/lib/markets'
 import type { AnalysisResult } from '@/lib/types'
@@ -133,6 +133,14 @@ export function SignalPanel({ analysis, analyzing, onReanalyze }: Props) {
   const verdictLabel = ai.signal === 'LONG' ? 'GO LONG' : ai.signal === 'SHORT' ? 'GO SHORT' : 'KEEP OFF'
   const timeAgo = Math.max(0, Math.round((Date.now() - new Date(analysis.analyzedAt).getTime()) / 60000))
 
+  // human-friendly validity: "~36h" → "1.5 days", "~8h" → "8h"
+  const validLabel =
+    ai.validHours === null
+      ? null
+      : ai.validHours >= 48
+        ? `${(ai.validHours / 24).toFixed(ai.validHours % 24 === 0 ? 0 : 1)} days`
+        : `${ai.validHours}h`
+
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-xl border border-zinc-800/70 bg-zinc-950/50">
       {/* header */}
@@ -185,6 +193,20 @@ export function SignalPanel({ analysis, analyzing, onReanalyze }: Props) {
                 </span>
               </div>
               <p className="mt-2 text-xs leading-relaxed text-zinc-300">{ai.summary}</p>
+              {/* multi-timeframe view: why this timeframe's call can differ from another */}
+              {ai.mtfView && (
+                <div className="mt-2 flex items-start gap-1.5 rounded-md border border-zinc-800/80 bg-zinc-900/40 px-2 py-1.5">
+                  <Layers className="mt-0.5 h-3 w-3 shrink-0 text-sky-400/80" aria-hidden="true" />
+                  <p className="text-[11px] leading-relaxed text-zinc-400">{ai.mtfView}</p>
+                </div>
+              )}
+              {/* keep-off re-check hint */}
+              {!isTrade && ai.tradeWindow && (
+                <div className="mt-2 flex items-start gap-1.5 rounded-md border border-zinc-800/80 bg-zinc-900/40 px-2 py-1.5">
+                  <Timer className="mt-0.5 h-3 w-3 shrink-0 text-amber-400/80" aria-hidden="true" />
+                  <p className="text-[11px] leading-relaxed text-zinc-400">{ai.tradeWindow}</p>
+                </div>
+              )}
               <p className="num mt-1.5 text-[9px] text-zinc-600">
                 analyzed {timeAgo === 0 ? 'just now' : `${timeAgo}m ago`} · bias {ai.bias}
               </p>
@@ -221,6 +243,21 @@ export function SignalPanel({ analysis, analyzing, onReanalyze }: Props) {
                 <LevelTile label="Target 2" value={ai.takeProfit2} digits={meta.tickDigits} tone="tp" />
               </div>
             )}
+            {/* trade validity window: when to cut the trade if TP1 is not hit */}
+            <div className="mt-2.5 flex items-start gap-2 rounded-lg border border-sky-500/20 bg-sky-500/[0.05] px-2.5 py-2">
+              <Timer className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sky-400" aria-hidden="true" />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] font-semibold uppercase tracking-wider text-sky-300/80">Trade window</span>
+                  {validLabel && (
+                    <span className="num rounded-full border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-bold text-sky-300">
+                      valid ~{validLabel}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-[11px] leading-relaxed text-zinc-300">{ai.tradeWindow}</p>
+              </div>
+            </div>
           </div>
         )}
 
@@ -296,7 +333,7 @@ export function SignalPanel({ analysis, analyzing, onReanalyze }: Props) {
           </div>
         </div>
 
-        {/* invalidation + news + risk */}
+        {/* invalidation + experience + news + risk */}
         <div className="space-y-2.5 px-4 py-3">
           <div className="rounded-lg border border-zinc-800/80 bg-zinc-900/40 p-2.5">
             <div className="mb-1 flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
@@ -304,6 +341,14 @@ export function SignalPanel({ analysis, analyzing, onReanalyze }: Props) {
             </div>
             <p className="text-[11px] leading-relaxed text-zinc-400">{ai.invalidation}</p>
           </div>
+          {ai.experienceNote && (
+            <div className="rounded-lg border border-zinc-800/80 bg-zinc-900/40 p-2.5">
+              <div className="mb-1 flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
+                <History className="h-3 w-3" aria-hidden="true" /> 20 years of pattern memory
+              </div>
+              <p className="text-[11px] leading-relaxed text-zinc-400">{ai.experienceNote}</p>
+            </div>
+          )}
           <div className="rounded-lg border border-zinc-800/80 bg-zinc-900/40 p-2.5">
             <div className="mb-1 flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
               <Zap className="h-3 w-3" aria-hidden="true" /> News impact

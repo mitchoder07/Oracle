@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { DEFAULT_WATCHLIST, getSymbolMeta } from '@/lib/markets'
+import { canonicalSymbol, DEFAULT_WATCHLIST, getSymbolMeta, isValidSymbol, LEGACY_SYMBOL_MAP } from '@/lib/markets'
 import type { WatchItemDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -18,7 +18,7 @@ function toDTO(item: any): WatchItemDTO {
   }
 }
 
-// GET — seeds defaults on first run, returns the watchlist
+// GET — seeds defaults on first run, migrates legacy symbols, returns the watchlist
 export async function GET() {
   let count = await db.watchItem.count()
   if (count === 0) {
@@ -32,6 +32,23 @@ export async function GET() {
     })
     count = await db.watchItem.count()
   }
+
+  // migrate legacy rows (PAXGUSDT from when gold was the token; gold is now
+  // real spot XAUUSD) so existing deployments keep working after the change
+  for (const [legacy, current] of Object.entries(LEGACY_SYMBOL_MAP)) {
+    const row = await db.watchItem.findUnique({ where: { symbol: legacy } })
+    if (!row) continue
+    const target = await db.watchItem.findUnique({ where: { symbol: current } })
+    if (target) {
+      await db.watchItem.delete({ where: { symbol: legacy } })
+    } else {
+      await db.watchItem.update({
+        where: { symbol: legacy },
+        data: { symbol: current, market: getSymbolMeta(current).market },
+      })
+    }
+  }
+
   const items = await db.watchItem.findMany({ orderBy: { createdAt: 'asc' } })
   return NextResponse.json({ items: items.map(toDTO) })
 }
@@ -44,8 +61,11 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
-  const symbol = String(body?.symbol ?? '').toUpperCase()
+  const symbol = canonicalSymbol(String(body?.symbol ?? ''))
   if (!symbol) return NextResponse.json({ error: 'symbol is required' }, { status: 400 })
+  if (!isValidSymbol(symbol)) {
+    return NextResponse.json({ error: `Unknown symbol ${symbol}` }, { status: 400 })
+  }
 
   const meta = getSymbolMeta(symbol)
   const existing = await db.watchItem.findUnique({ where: { symbol } })
