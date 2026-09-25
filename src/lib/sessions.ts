@@ -71,7 +71,7 @@ export function getMarketSession(
       return {
         open: false,
         label: 'CLOSED',
-        detail: 'Weekend — reopens Sun 5:00 PM ET',
+        detail: 'Weekend: reopens Sunday 5:00 PM ET',
         market,
       }
     }
@@ -87,7 +87,7 @@ export function getMarketSession(
       return {
         open: false,
         label: 'XAU CLOSED',
-        detail: 'Spot gold closed — reopens Sun 6:00 PM ET (chart shows the 24/7 PAXG token price)',
+        detail: 'Weekend: reopens Sunday 6:00 PM ET (chart shows the 24/7 PAXG token price)',
         market,
       }
     }
@@ -108,7 +108,7 @@ export function sessionPromptLine(now: Date = new Date()): string {
   const ny = nyParts(now)
   const fx = isForexClosed(now)
     ? 'FX market: CLOSED for the weekend (prices are Friday\u2019s close; weekend gap risk applies; reopens Sunday 5:00 PM ET)'
-    : 'FX market: OPEN (24/5 — closes Friday 5:00 PM ET)'
+    : 'FX market: OPEN (24/5, closes Friday 5:00 PM ET)'
   const gold = isMetalClosed(now)
     ? 'GOLD (XAU/USD) spot market: CLOSED for the weekend (reopens Sunday 6:00 PM ET; any XAU price shown is the 24/7 PAXG token proxy, which can drift from spot and thins out on weekends)'
     : 'GOLD (XAU/USD) spot market: OPEN (closes Friday 5:00 PM ET)'

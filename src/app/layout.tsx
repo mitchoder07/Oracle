@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "TradeOracle AI — AI Trading Intelligence Terminal",
+  title: "TradeOracle AI | AI Trading Intelligence Terminal",
   description:
     "Your super-intelligent trading companion: live crypto & forex markets, AI chart analysis with LONG/SHORT/KEEP-OFF verdicts, real-time signal notifications and news intelligence.",
   keywords: ["crypto", "forex", "trading", "AI", "signals", "technical analysis", "trading terminal"],

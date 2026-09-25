@@ -327,7 +327,7 @@ export function AlertsCenter() {
 
               <p className="border-t border-zinc-800/60 pt-3 text-[10px] leading-relaxed text-zinc-600">
                 Notifications are triggered when an AI verdict <em>changes</em> (e.g. LONG → SHORT, or a new KEEP_OFF
-                after a trade call) or when confidence shifts by 15+ points — no spam, only meaningful flips.
+                after a trade call) or when confidence shifts by 15+ points. No spam, only meaningful flips.
               </p>
             </>
           )}

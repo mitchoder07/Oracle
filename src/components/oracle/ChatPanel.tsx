@@ -89,7 +89,7 @@ export function ChatPanel() {
     const list = Array.from(files).filter((f) => f.type.startsWith('image/'))
     for (const f of list) {
       if (f.size > MAX_IMAGE_BYTES) {
-        setAttachError(`"${f.name}" is over 8 MB — please use a smaller screenshot.`)
+        setAttachError(`"${f.name}" is over 8 MB. Please pick a smaller screenshot.`)
         continue
       }
       if (attachments.length >= MAX_ATTACHMENTS) {
@@ -182,7 +182,7 @@ export function ChatPanel() {
             <div>
               <p className="text-sm font-semibold text-zinc-200">Talk strategy with your AI trader</p>
               <p className="mt-1 max-w-sm text-xs leading-relaxed text-zinc-500">
-                ORACLE answers with live market context — current indicators, structure and news for the pair you have
+                ORACLE answers with live market context: current indicators, structure and news for the pair you have
                 open. Attach or paste a chart screenshot and it will read the chart for you.
               </p>
             </div>

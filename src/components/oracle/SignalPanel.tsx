@@ -1,6 +1,6 @@
 'use client'
 
-import { AlertTriangle, Brain, RefreshCw, Shield, Target, Zap } from 'lucide-react'
+import { AlertTriangle, Brain, Info, RefreshCw, Shield, Target, Zap } from 'lucide-react'
 import { useTerminal, signalBg } from './store'
 import { formatPrice, getSymbolMeta } from '@/lib/markets'
 import type { AnalysisResult } from '@/lib/types'
@@ -113,7 +113,7 @@ export function SignalPanel({ analysis, analyzing, onReanalyze }: Props) {
           </p>
           <p className="mt-1 max-w-xs text-xs text-zinc-500">
             {analyzing
-              ? `Scanning ${meta.displaySymbol} ${timeframe} — indicators, structure, momentum, volume and news.`
+              ? `Scanning ${meta.displaySymbol} ${timeframe}: indicators, structure, momentum, volume and news.`
               : `The AI trader will deliver a LONG / SHORT / KEEP-OFF verdict with entry, stop and targets for ${meta.displaySymbol}.`}
           </p>
         </div>
@@ -227,7 +227,7 @@ export function SignalPanel({ analysis, analyzing, onReanalyze }: Props) {
         {/* rationale */}
         <div className="border-b border-zinc-800/70 px-4 py-3">
           <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-            <Zap className="h-3 w-3" aria-hidden="true" /> Why
+            <Info className="h-3 w-3" aria-hidden="true" /> Why
           </div>
           <ul className="space-y-1.5">
             {ai.rationale.map((r, i) => (

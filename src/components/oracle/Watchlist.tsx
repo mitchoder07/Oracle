@@ -145,7 +145,7 @@ export function Watchlist() {
       <div className="flex-1 overflow-y-auto">
         {watchlist.length === 0 && (
           <p className="px-3 py-6 text-center text-xs text-zinc-500">
-            Watchlist empty — add pairs to get AI signal alerts.
+            Watchlist is empty. Add a pair to start getting AI signal alerts.
           </p>
         )}
         {watchlist.map((item) => {
@@ -185,9 +185,9 @@ export function Watchlist() {
                     )}
                     title={
                       item.market === 'FOREX'
-                        ? `Forex · ${fxSession.open ? 'market open' : `market closed — ${fxSession.detail}`}`
+                        ? `Forex · ${fxSession.open ? 'market open' : `market closed (${fxSession.detail})`}`
                         : item.market === 'METAL'
-                          ? `Gold · ${goldSession.open ? 'spot market open' : `spot closed — ${goldSession.detail}`}`
+                          ? `Gold · ${goldSession.open ? 'spot market open' : `spot closed (${goldSession.detail})`}`
                           : MARKET_LABEL[item.market] ?? item.market
                     }
                   />
@@ -248,10 +248,10 @@ export function Watchlist() {
         (watchlist.some((i) => i.market === 'METAL') && !goldSession.open)) && (
         <div className="border-t border-amber-500/20 bg-amber-500/[0.06] px-3 py-1.5 text-[10px] text-amber-300/90">
           {watchlist.some((i) => i.market === 'FOREX') && !fxSession.open && (
-            <span>Forex is closed — {fxSession.detail}. Prices show Friday’s close.</span>
+            <span>Forex is closed right now ({fxSession.detail}). Prices are frozen at Friday’s close.</span>
           )}
           {watchlist.some((i) => i.market === 'METAL') && !goldSession.open && (
-            <span> Gold spot is closed — {goldSession.detail}.</span>
+            <span> Gold spot is closed right now ({goldSession.detail}).</span>
           )}
         </div>
       )}

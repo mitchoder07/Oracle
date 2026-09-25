@@ -9,18 +9,23 @@ import { getZAI } from './zai'
 
 // ─── ORACLE: elite AI trading analyst ────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are ORACLE — an elite, institutional-grade trading analyst with 20+ years of experience across crypto and forex markets. You have digested every major market cycle, crash, mania and consolidation since the dot-com era and combine:
+const SYSTEM_PROMPT = `You are ORACLE, an elite institutional-grade trading analyst with 20+ years of experience across crypto and forex markets. You have digested every major market cycle, crash, mania and consolidation since the dot-com era and combine:
 
 - Deep technical analysis: market structure (HH/HL vs LH/LL), EMA dynamics, RSI & divergences, MACD momentum, Bollinger volatility regimes, ATR-based risk sizing, volume/OBV confirmation, candlestick patterns.
 - Multi-timeframe confluence: you always check that the trading timeframe agrees with the higher timeframe bias.
 - News & macro awareness: you weigh how headlines, sentiment and risk-on/risk-off flows affect the setup.
 - Merciless risk management: every trade idea must have a logical invalidation point, stop placement beyond structure (not at round numbers), and asymmetric R:R of at least 1.5.
 
-Your personality: decisive, calm, brutally honest. A sloppy chart gets called out — "KEEP_OFF" (no trade) is frequently the smartest and most professional call. You never force trades. You think like a senior portfolio manager protecting capital first, chasing alpha second.
+Your personality: decisive, calm, honest and human. You sound like a veteran trader a friend can trust, not a corporate report. A sloppy chart gets called out. "KEEP_OFF" (no trade) is frequently the smartest and most professional call. You never force trades. You think like a senior portfolio manager protecting capital first, chasing alpha second.
+
+WRITING STYLE (applies to every text field you write: summary, rationale, invalidation, newsImpact, riskWarning):
+- NEVER use em dashes (—) or en dashes (–). Not once. Use a comma, a period or parentheses instead. This is a hard rule.
+- Write the way a real human trader talks: natural, warm, plain English. Contractions are welcome ("don't", "it's", "you're"). Everyday words beat jargon when both work.
+- No stiff AI phrasing, no hype words, no filler. Every sentence should earn its place and be grounded in the actual numbers from the snapshot.
 
 TASK: You will receive a quantitative snapshot of a chart (indicators, structure, levels, recent candles), plus recent news headlines. Give your professional verdict.
 
-Respond with ONLY one valid JSON object — no markdown fences, no commentary before or after. Schema:
+Respond with ONLY one valid JSON object. No markdown fences, no commentary before or after. Schema:
 {
   "signal": "LONG" | "SHORT" | "KEEP_OFF",
   "confidence": <integer 0-100>,
@@ -105,18 +110,18 @@ function sessionNoteFor(symbol: string): string {
   const meta = getSymbolMeta(symbol)
   const session = getMarketSession(meta.market)
   if (meta.market === 'FOREX' && !session.open) {
-    return 'SESSION NOTE: This is a forex pair and the FX market is CLOSED right now (weekend). The snapshot shows Friday\u2019s closing prices — nothing is trading. Factor weekend gap risk and headline risk into confidence; a KEEP_OFF with gap-risk rationale is often the most professional call, or present a plan conditional on the Sunday 17:00 ET reopen. Never describe the market as \u201cmoving right now\u201d.'
+    return 'SESSION NOTE: This is a forex pair and the FX market is CLOSED right now (weekend). The snapshot shows Friday\u2019s closing prices; nothing is trading. Factor weekend gap risk and headline risk into confidence. A KEEP_OFF with gap-risk rationale is often the most professional call, or present a plan conditional on the Sunday 17:00 ET reopen. Never describe the market as \u201cmoving right now\u201d.'
   }
   if (meta.market === 'FOREX') {
     return 'SESSION NOTE: FX market is currently open (24/5).'
   }
   if (meta.market === 'METAL' && !session.open) {
-    return 'SESSION NOTE: This is gold (XAU/USD) and the SPOT metals market is CLOSED right now (weekend — reopens Sunday 18:00 ET). The price shown comes from the PAXG token, a 24/7 crypto proxy that tracks spot gold closely but can drift and thins out on weekends. Treat the chart as Friday\u2019s close plus thin weekend token trading; weigh weekend gap risk and consider KEEP_OFF or a plan conditional on the Sunday 18:00 ET spot reopen.'
+    return 'SESSION NOTE: This is gold (XAU/USD) and the SPOT metals market is CLOSED right now (weekend, reopens Sunday 18:00 ET). The price shown comes from the PAXG token, a 24/7 crypto proxy that tracks spot gold closely but can drift and thins out on weekends. Treat the chart as Friday\u2019s close plus thin weekend token trading. Weigh weekend gap risk and consider KEEP_OFF or a plan conditional on the Sunday 18:00 ET spot reopen.'
   }
   if (meta.market === 'METAL') {
     return 'SESSION NOTE: Spot gold market is currently open (closes Friday 17:00 ET); the price shown is the PAXG token tracking spot XAU/USD.'
   }
-  return 'SESSION NOTE: Crypto trades 24/7 — the market is open now.'
+  return 'SESSION NOTE: Crypto trades 24/7, so the market is open right now.'
 }
 
 async function callOracle(
@@ -172,18 +177,18 @@ Give your professional verdict as the JSON object per the schema.`
       riskReward: 1.8,
       timeHorizon: 'swing',
       summary: `${meta.displaySymbol} ${snapshot.timeframe}: rules engine reads ${
-        fb.signal === 'KEEP_OFF' ? 'mixed conditions — stand aside' : fb.signal === 'LONG' ? 'bullish confluence' : 'bearish confluence'
-      }. (AI model unavailable — deterministic engine verdict.)`,
+        fb.signal === 'KEEP_OFF' ? 'mixed conditions, so stand aside' : fb.signal === 'LONG' ? 'bullish confluence' : 'bearish confluence'
+      }. (AI model unavailable, deterministic engine verdict.)`,
       rationale: fb.rationale,
       keyLevels: snapshot.keyLevels,
       invalidation:
         fb.signal === 'LONG'
-          ? 'Loss of the nearest support level flips the bias neutral/bearish.'
+          ? 'Losing the nearest support level would flip the bias neutral or bearish.'
           : fb.signal === 'SHORT'
-            ? 'Reclaim of the nearest resistance level flips the bias neutral/bullish.'
+            ? 'Reclaiming the nearest resistance level would flip the bias neutral or bullish.'
             : 'A breakout of the recent range with volume would create a tradeable setup.',
       newsImpact: 'News intelligence unavailable for this scan.',
-      riskWarning: 'Signals are statistical opinions, not guarantees. Size positions responsibly.',
+      riskWarning: 'Signals are opinions, not guarantees. Size positions responsibly.',
     },
     source: 'rules',
   }

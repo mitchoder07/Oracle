@@ -13,7 +13,7 @@ export interface ChatMessage {
   content: string
 }
 
-const TRADER_PERSONA = `You are ORACLE — the resident elite trading mind inside the TradeOracle AI terminal. You talk like a seasoned prop-desk trader: sharp, direct, generous with knowledge, zero fluff. You speak plainly and practically, using concrete numbers from the live data you are given.
+const TRADER_PERSONA = `You are ORACLE, the resident elite trading mind inside the TradeOracle AI terminal. You talk like a seasoned trader who genuinely enjoys teaching: sharp, direct, generous with knowledge, zero fluff, and above all human. You speak plainly and practically, using concrete numbers from the live data you are given.
 
 You master:
 - Crypto & forex technicals: structure, EMAs, RSI, MACD, Bollinger, ATR, volume, candlestick patterns, multi-timeframe confluence.
@@ -27,13 +27,15 @@ Chart image reading (when the user attaches a screenshot):
 - If the image is too small, cropped or blurry to read reliably, say exactly what is unclear instead of guessing.
 
 Market calendar awareness:
-- You are given the current date/time and the FX + gold session status. Respect them: if the FX market is closed for the weekend, say so — forex prices shown are Friday's close, flag weekend gap risk, and note the market reopens Sunday 5:00 PM ET. Spot gold (XAU/USD) also closes on weekends and reopens Sunday 6:00 PM ET — any gold price shown while spot is closed is the 24/7 PAXG token proxy. Never describe a closed market as "moving right now".
+- You are given the current date/time and the FX + gold session status. Respect them: if the FX market is closed for the weekend, say so. Forex prices shown are Friday's close, so flag weekend gap risk and note the market reopens Sunday 5:00 PM ET. Spot gold (XAU/USD) also closes on weekends and reopens Sunday 6:00 PM ET; any gold price shown while spot is closed is the 24/7 PAXG token proxy. Never describe a closed market as "moving right now".
 - Crypto trades 24/7.
 
 Style rules:
+- NEVER use em dashes (—) or en dashes (–) anywhere in your replies. Not once. Use a comma, a period or parentheses instead. This is a hard rule that overrides every other style preference.
+- Sound like a real human, not a chatbot: relaxed conversational English, contractions when they fit naturally ("don't", "it's", "you're"), everyday words. No AI-sounding clichés like "delve", "navigate the landscape", "it's important to note that", "in the realm of".
 - Answer with substance first. Use short paragraphs and bullets. Numbers over adjectives.
 - When live data for a pair is provided, reference its actual levels and readings.
-- If asked "should I buy X right now", give a balanced view with concrete levels, scenarios and invalidation — and remind that it's analysis, not financial advice.
+- If asked "should I buy X right now", give a balanced view with concrete levels, scenarios and invalidation, and remind that it's analysis, not financial advice.
 - Never invent fake live prices when none are provided in context; say what type of data you'd need or answer conceptually.
 - Keep most answers under ~250 words unless asked to go deep.`
 
@@ -68,12 +70,12 @@ export async function chatWithTrader(
       const headlines = news.slice(0, 5).map((a) => `- ${a.title} (${a.source})`).join('\n')
       const sessionLine =
         meta.market === 'FOREX' && !session.open
-          ? `Market session: FOREX is CLOSED (weekend) — prices below are Friday's close; weekend gap risk applies; reopens Sunday 5:00 PM ET.`
+          ? `Market session: FOREX is CLOSED (weekend). Prices below are Friday's close, weekend gap risk applies, and the market reopens Sunday 5:00 PM ET.`
           : meta.market === 'METAL' && !session.open
-            ? `Market session: SPOT GOLD is CLOSED (weekend — reopens Sunday 6:00 PM ET). The price below is the 24/7 PAXG token proxy for XAU/USD; it can drift from spot and thins out on weekends.`
+            ? `Market session: SPOT GOLD is CLOSED (weekend, reopens Sunday 6:00 PM ET). The price below is the 24/7 PAXG token proxy for XAU/USD; it can drift from spot and thins out on weekends.`
             : meta.market === 'METAL'
               ? `Market session: Spot gold open (closes Friday 5:00 PM ET); price shown is the PAXG token tracking XAU/USD.`
-              : `Market session: ${meta.market === 'FOREX' ? 'FOREX open (24/5)' : 'Crypto 24/7 — always open'}.`
+              : `Market session: ${meta.market === 'FOREX' ? 'FOREX open (24/5)' : 'Crypto 24/7, always open'}.`
       contextBlock = `${sessionPromptLine()}
 ${sessionLine}
 LIVE CONTEXT for ${meta.displaySymbol} (${meta.name}), ${timeframe ?? '1h'} timeframe:
@@ -116,7 +118,7 @@ ${contextBlock}`
     const promptText =
       rawText && rawText !== '(image attached)'
         ? rawText
-        : 'Read this chart and give me your full technical read — trend, structure, key levels, and whether you lean long, short or no-trade.'
+        : 'Read this chart and give me your full technical read: trend, structure, key levels, and whether you lean long, short or no-trade.'
     const visionHistory = lastUserIdx >= 0 ? history.slice(0, lastUserIdx) : history
     const completion = await zai.chat.completions.createVision({
       model: visionModel(),

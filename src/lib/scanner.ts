@@ -109,7 +109,7 @@ export async function recordSignal(
       const meta = getSymbolMeta(symbol)
       const title =
         result.ai.signal === 'KEEP_OFF'
-          ? `${meta.displaySymbol} ${timeframe}: Stand aside — no trade (conviction ${result.ai.confidence}%)`
+          ? `${meta.displaySymbol} ${timeframe}: Stand aside, no trade (conviction ${result.ai.confidence}%)`
           : result.ai.signal === 'LONG'
             ? `${meta.displaySymbol} ${timeframe}: GO LONG ${result.ai.confidence}%`
             : `${meta.displaySymbol} ${timeframe}: GO SHORT ${result.ai.confidence}%`

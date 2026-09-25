@@ -237,7 +237,7 @@ export function TerminalShell() {
       <footer className="mt-auto border-t border-zinc-800/70 bg-zinc-950/70">
         <div className="mx-auto flex max-w-[1600px] flex-col items-center gap-1.5 px-4 py-4 text-center sm:flex-row sm:justify-between sm:text-left">
           <p className="text-[10px] leading-relaxed text-zinc-600">
-            ⚠️ TradeOracle AI produces AI-generated analysis for educational purposes — not financial advice. Markets
+            ⚠️ TradeOracle AI produces AI-generated analysis for educational purposes. It is not financial advice. Markets
             carry risk; never trade blind.
           </p>
           <p className="num shrink-0 text-[10px] text-zinc-600">

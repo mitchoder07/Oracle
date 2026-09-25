@@ -8,6 +8,7 @@ import {
   HistogramSeries,
   LineSeries,
   LineStyle,
+  TickMarkType,
   createChart,
   type IChartApi,
   type ISeriesApi,
@@ -30,6 +31,40 @@ interface Props {
   analyzing: boolean
 }
 
+// ── local-time axis labels (the library defaults to UTC; users expect their
+//    own wall-clock time, exactly like TradingView's local timezone setting) ──
+const pad2 = (n: number) => String(n).padStart(2, '0')
+
+function localTickMarkFormatter(time: UTCTimestamp, tickMarkType: TickMarkType, _locale: string): string {
+  const d = new Date(time * 1000) // interpreted in the browser's local timezone
+  switch (tickMarkType) {
+    case TickMarkType.Year:
+      return String(d.getFullYear())
+    case TickMarkType.Month:
+      return d.toLocaleString(undefined, { month: 'short' })
+    case TickMarkType.DayOfMonth:
+      return `${d.toLocaleString(undefined, { month: 'short' })} ${d.getDate()}`
+    case TickMarkType.Time:
+      return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+    case TickMarkType.TimeWithSeconds:
+      return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+    default:
+      return d.toLocaleString(undefined)
+  }
+}
+
+function localTimeFormatter(time: UTCTimestamp): string {
+  const d = new Date(time * 1000)
+  return `${d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}, ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+}
+
+/** Browser timezone label for the footer, e.g. "UTC+1" (Lagos) or "UTC-4". */
+function browserTzLabel(): string {
+  const off = -new Date().getTimezoneOffset() / 60
+  const rounded = Math.round(off * 10) / 10
+  return `UTC${rounded >= 0 ? '+' : '-'}${Math.abs(rounded)}`
+}
+
 export function ChartPanel({ analysis, analyzing }: Props) {
   const symbol = useTerminal((s) => s.selectedSymbol)
   const timeframe = useTerminal((s) => s.timeframe)
@@ -50,10 +85,17 @@ export function ChartPanel({ analysis, analyzing }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [showEma, setShowEma] = useState(true)
   const [showVol, setShowVol] = useState(true)
+  const [tzLabel, setTzLabel] = useState<string | null>(null)
   const [, setClockTick] = useState(0)
 
   const meta = getSymbolMeta(symbol)
   const tick = ticks[symbol]
+
+  // compute the browser timezone label client-side only (the server's timezone
+  // would differ from the visitor's, which would break hydration)
+  useEffect(() => {
+    setTzLabel(browserTzLabel())
+  }, [])
 
   // refresh market-session state (open/closed) every 30s
   useEffect(() => {
@@ -83,7 +125,16 @@ export function ChartPanel({ analysis, analyzing }: Props) {
         horzLine: { color: '#52525b', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#09090b' },
       },
       rightPriceScale: { borderColor: '#27272a' },
-      timeScale: { borderColor: '#27272a', timeVisible: true, secondsVisible: false, rightOffset: 6 },
+      timeScale: {
+        borderColor: '#27272a',
+        timeVisible: true,
+        secondsVisible: false,
+        rightOffset: 6,
+        tickMarkFormatter: localTickMarkFormatter,
+      },
+      localization: {
+        timeFormatter: localTimeFormatter,
+      },
       handleScale: { axisPressedMouseMove: { time: true, price: false } },
     })
     chartRef.current = chart
@@ -394,8 +445,8 @@ export function ChartPanel({ analysis, analyzing }: Props) {
           <MoonStar className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           <span>
             {meta.market === 'METAL'
-              ? `Spot gold (XAU) is closed for the weekend — ${session.detail}. The chart shows the 24/7 PAXG token price, a close proxy for spot gold.`
-              : `FX market is closed for the weekend — prices are Friday’s close. ${session.detail}. Weekend gap risk applies.`}
+              ? `Spot gold (XAU) is closed for the weekend (${session.detail}). The chart shows the 24/7 PAXG token price, a close proxy for spot gold.`
+              : `The FX market is closed for the weekend, so prices are Friday's close. ${session.detail}. Weekend gap risk applies.`}
           </span>
         </div>
       )}
@@ -403,6 +454,17 @@ export function ChartPanel({ analysis, analyzing }: Props) {
       {/* chart area */}
       <div className="relative min-h-[340px] flex-1 sm:min-h-[420px]">
         <div ref={containerRef} className="absolute inset-0" aria-label={`${meta.displaySymbol} candlestick chart`} />
+        {/* real-data provenance badge: every candle comes straight from the exchange */}
+        <div
+          className="pointer-events-none absolute left-2 top-2 z-10 flex items-center gap-1.5 rounded-md border border-emerald-500/20 bg-zinc-950/70 px-2 py-0.5 text-[10px] font-semibold text-emerald-400 backdrop-blur-sm"
+          title={`Real exchange data streamed live from ${meta.source === 'kraken' ? 'Kraken' : 'Binance'}. The same prices you would see on the exchange's own website. Nothing on this chart is simulated.`}
+        >
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
+          </span>
+          LIVE · {meta.source === 'kraken' ? 'Kraken' : meta.market === 'METAL' ? 'Binance PAXG' : 'Binance'}
+        </div>
         {loading && (
           <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/60 backdrop-blur-[1px]">
             <div className="flex items-center gap-2 text-xs text-zinc-400">
@@ -415,7 +477,7 @@ export function ChartPanel({ analysis, analyzing }: Props) {
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center">
             <p className="text-xs text-red-400">{error}</p>
             <p className="max-w-sm text-[11px] text-zinc-500">
-              Market data is temporarily unreachable from this region. Live WebSocket feeds may still be running — try
+              Market data is temporarily unreachable from this region. Live WebSocket feeds may still be running. Try
               again shortly.
             </p>
             <button
@@ -438,11 +500,12 @@ export function ChartPanel({ analysis, analyzing }: Props) {
         </span>
         <span className="hidden sm:inline">
           {session.open
-            ? 'Candles update in realtime via WebSocket'
+            ? 'Real exchange data, updating in realtime'
             : meta.market === 'METAL'
-              ? 'Spot market closed — weekend candles are thin PAXG token trading'
-              : 'Market closed — candles frozen at Friday’s close'}
+              ? 'Spot market closed. Weekend candles are thin PAXG token trading'
+              : 'Market closed. Candles are frozen at Friday\u2019s close'}
         </span>
+        {tzLabel && <span className="hidden md:inline text-zinc-600">· Times shown in your timezone ({tzLabel})</span>}
         <div className="flex-1" />
         <span className="num">{symbol} · {timeframe}</span>
       </div>

@@ -155,7 +155,7 @@ export function NewsFeed() {
           <div className="space-y-3">
             {data.sentiment && <SentimentBanner sentiment={data.sentiment} />}
             {data.articles.length === 0 && (
-              <p className="py-8 text-center text-xs text-zinc-500">No articles found — try a refresh.</p>
+              <p className="py-8 text-center text-xs text-zinc-500">No articles found. Try a refresh.</p>
             )}
             {data.articles.map((a, i) => (
               <a
