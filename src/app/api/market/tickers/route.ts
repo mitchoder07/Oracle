@@ -28,6 +28,7 @@ export async function GET(req: NextRequest) {
           high: t.high,
           low: t.low,
           quoteVolume: t.quoteVolume,
+          meta: t.meta ?? undefined,
         }
       })
     return NextResponse.json({ tickers: out, ts: Date.now() })

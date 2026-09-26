@@ -26,6 +26,10 @@ export function TickerTape() {
         price: t?.price,
         changePct: t?.changePct,
         digits: meta.tickDigits,
+        // feed health (gold): stale data gets a visible DELAYED tag instead of
+        // silently pretending a frozen number is live
+        feedStale: t?.meta?.stale === true,
+        feedClosed: t?.meta && t.meta.marketOpen === false,
       }
     })
   }, [ticks])
@@ -47,6 +51,22 @@ export function TickerTape() {
       {item.changePct !== undefined && (
         <span className={`num text-[11px] font-semibold ${changeColor(item.changePct)}`}>
           {item.changePct > 0 ? '▲' : item.changePct < 0 ? '▼' : ''} {Math.abs(item.changePct).toFixed(2)}%
+        </span>
+      )}
+      {item.feedStale && (
+        <span
+          className="rounded bg-amber-500/15 px-1 text-[8px] font-bold uppercase tracking-wide text-amber-400"
+          title="The live gold feed is behind right now. The price shown may lag the market."
+        >
+          delayed
+        </span>
+      )}
+      {!item.feedStale && item.feedClosed && (
+        <span
+          className="rounded bg-zinc-700/40 px-1 text-[8px] font-bold uppercase tracking-wide text-zinc-400"
+          title="Spot gold is closed for the weekend. The price shown is Friday's close."
+        >
+          closed
         </span>
       )}
       <span className="text-zinc-700">|</span>

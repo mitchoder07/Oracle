@@ -15,6 +15,8 @@ export interface LiveTick {
   volume: number
   ts: number
   dir?: 'up' | 'down'
+  /** Feed health metadata (gold spot feed): source + age + stale flag. */
+  meta?: { source: string; asOf: number; stale: boolean; marketOpen: boolean }
 }
 
 export interface ScannerStatus {

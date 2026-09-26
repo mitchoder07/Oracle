@@ -201,6 +201,14 @@ export function Watchlist() {
                       spot closed
                     </span>
                   )}
+                  {item.market === 'METAL' && goldSession.open && ticks[item.symbol]?.meta?.stale && (
+                    <span
+                      className="shrink-0 rounded border border-amber-400/30 px-1 text-[8px] font-semibold uppercase text-amber-400/90"
+                      title="The live gold feed is behind right now (upstream data issue). The price may lag the market."
+                    >
+                      delayed
+                    </span>
+                  )}
                 </div>
                 <span className="block max-w-32 truncate text-[10px] text-zinc-500">{meta.name}</span>
               </div>

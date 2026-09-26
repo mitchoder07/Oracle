@@ -454,23 +454,49 @@ export function ChartPanel({ analysis, analyzing }: Props) {
       {/* chart area */}
       <div className="relative min-h-[340px] flex-1 sm:min-h-[420px]">
         <div ref={containerRef} className="absolute inset-0" aria-label={`${meta.displaySymbol} candlestick chart`} />
-        {/* real-data provenance badge: every candle comes straight from the market */}
-        <div
-          className="pointer-events-none absolute left-2 top-2 z-10 flex items-center gap-1.5 rounded-md border border-emerald-500/20 bg-zinc-950/70 px-2 py-0.5 text-[10px] font-semibold text-emerald-400 backdrop-blur-sm"
-          title={
+        {/* real-data provenance badge: every candle comes straight from the market.
+            Gold feed health is shown honestly: LIVE / DELAYED / CLOSED. */}
+        {(() => {
+          const goldMeta = meta.source === 'gold' ? ticks['XAUUSD']?.meta : undefined
+          const tone = goldMeta?.stale ? 'delayed' : goldMeta && goldMeta.marketOpen === false ? 'closed' : 'live'
+          const label =
             meta.source === 'gold'
-              ? 'Real spot gold. The live price is the true XAU/USD spot rate; candle history is COMEX gold re-anchored to spot, so levels match a broker gold chart. Nothing on this chart is simulated.'
+              ? `${tone === 'delayed' ? 'DELAYED' : tone === 'closed' ? 'CLOSED' : 'LIVE'} · Spot XAU/USD`
+              : meta.source === 'kraken'
+                ? 'LIVE · Kraken'
+                : 'LIVE · Binance'
+          const toneCls =
+            tone === 'delayed'
+              ? 'border-amber-500/30 bg-zinc-950/70 text-amber-400'
+              : tone === 'closed'
+                ? 'border-zinc-600/40 bg-zinc-950/70 text-zinc-400'
+                : 'border-emerald-500/20 bg-zinc-950/70 text-emerald-400'
+          const dotCls = tone === 'delayed' ? 'bg-amber-400' : tone === 'closed' ? 'bg-zinc-500' : 'bg-emerald-400'
+          const tip =
+            meta.source === 'gold'
+              ? tone === 'delayed'
+                ? 'The live gold feed is behind right now (upstream data issue), so the price may lag the market. Nothing is simulated; the app switches data sources automatically and catches up on its own.'
+                : tone === 'closed'
+                  ? 'Spot gold is closed for the weekend. Prices are frozen at Friday\u2019s close, exactly like a broker\u2019s chart. Nothing is simulated.'
+                  : 'Real spot gold. The live price is the true XAU/USD spot rate; candle history is COMEX gold re-anchored to spot, so levels match a broker gold chart. Nothing on this chart is simulated.'
               : meta.source === 'kraken'
                 ? 'Real exchange data streamed live from Kraken. The same prices you would see on the exchange\u2019s own website. Nothing on this chart is simulated.'
                 : 'Real exchange data streamed live from Binance. The same prices you would see on the exchange\u2019s own website. Nothing on this chart is simulated.'
-          }
-        >
-          <span className="relative flex h-1.5 w-1.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
-          </span>
-          LIVE · {meta.source === 'gold' ? 'Spot XAU/USD' : meta.source === 'kraken' ? 'Kraken' : 'Binance'}
-        </div>
+          return (
+            <div
+              className={`pointer-events-none absolute left-2 top-2 z-10 flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[10px] font-semibold backdrop-blur-sm ${toneCls}`}
+              title={tip}
+            >
+              {tone !== 'closed' && (
+                <span className="relative flex h-1.5 w-1.5">
+                  <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${dotCls}`} />
+                  <span className={`relative inline-flex h-1.5 w-1.5 rounded-full ${dotCls}`} />
+                </span>
+              )}
+              {label}
+            </div>
+          )
+        })()}
         {loading && (
           <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/60 backdrop-blur-[1px]">
             <div className="flex items-center gap-2 text-xs text-zinc-400">

@@ -34,6 +34,8 @@ export interface Ticker {
   volume: number
   quoteVolume: number
   eventTime: number
+  /** Feed health metadata (gold spot feed): where the quote came from and how old it is. */
+  meta?: { source: string; asOf: number; stale: boolean; marketOpen: boolean }
 }
 
 export type SignalType = 'LONG' | 'SHORT' | 'KEEP_OFF'

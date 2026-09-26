@@ -4,9 +4,12 @@
 //   • Binance market-data WS (data-stream.binance.vision) → crypto ticks
 //     and dynamic kline streams (both allow browser connections, no auth)
 //   • Kraken WS v2 → fiat forex ticks + live OHLC candles (+ month aggregation)
-//   • Gold: real spot XAU/USD. gold-api.com is polled browser-direct (CORS-open,
-//     updates every few seconds) and keeps the current candle + tape alive;
-//     candle history is spot-anchored COMEX data served by /api/market/klines.
+//   • Gold: real spot XAU/USD via /api/market/gold/spot. The route runs the
+//     server-side failover chain (gold-api -> COMEX-anchored -> PAXG) and
+//     returns feed-health metadata (source, age, stale, marketOpen) with every
+//     quote, so the browser feed can never silently freeze: outages surface as
+//     a DELAYED badge instead. Candle history is spot-anchored COMEX data
+//     served by /api/market/klines.
 // The auto-scanner runs through /api/scanner/step: this client pings it every
 // 60s while the terminal is open; the serverless route decides if a scan is due
 // and returns any notifications it produced.
@@ -23,8 +26,22 @@ type Handler = (payload: any) => void
 const BINANCE_WS = 'wss://data-stream.binance.vision'
 const KRAKEN_WS = 'wss://ws.kraken.com/v2'
 const KRAKEN_REST = 'https://api.kraken.com'
-const GOLD_SPOT_API = 'https://api.gold-api.com/price/XAU'
+const GOLD_SPOT_API = '/api/market/gold/spot'
 const GOLD_SYMBOL = 'XAUUSD'
+
+// shape returned by /api/market/gold/spot
+type GoldSpotQuote = {
+  price: number
+  source: string
+  asOf: number
+  ageSec: number
+  marketOpen: boolean
+  stale: boolean
+  open: number | null
+  high: number | null
+  low: number | null
+  ts: number
+}
 
 const BINANCE_UNIVERSE = new Set(SYMBOL_UNIVERSE.filter((s) => s.source === 'binance').map((s) => s.symbol))
 const KRAKEN_FOREX: Record<string, string> = Object.fromEntries(
@@ -82,13 +99,15 @@ class OracleFeeds {
   private forexTickState = new Map<string, any>()
   private forexEmitTimer: any = null
 
-  // ── Gold state (real spot XAU/USD, browser-direct polling) ──
+  // ── Gold state (real spot XAU/USD via server spot route) ──
   private goldChartSubs = new Map<string, number>()      // "XAUUSD:1h" -> refcount
   private goldCandles = new Map<string, Candle>()         // last live candle per interval
   private goldSpotTimer: any = null                       // 12s spot poll
   private goldTailCounter = 0                             // true-up cadence
   private goldDay: { open: number; high: number; low: number } | null = null
   private goldDayAt = 0
+  private goldFailStreak = 0                              // consecutive failed polls
+  private lastGoldTick: Ticker | null = null              // last dispatched tick (for DELAYED re-emit)
 
   // ── scanner client ──
   private scannerTimer: any = null
@@ -494,7 +513,7 @@ class OracleFeeds {
     } catch { /* best-effort seed */ }
   }
 
-  // ══════ Gold: real spot XAU/USD polling (browser-direct) ══════
+  // ══════ Gold: real spot XAU/USD via the server spot route ══════
   private startGoldPolling() {
     // immediate first poll so the tape/watchlist gets a price right away
     this.pollGoldSpot().catch(() => {})
@@ -503,24 +522,55 @@ class OracleFeeds {
     }, 12_000)
   }
 
-  private async fetchSpot(): Promise<number | null> {
+  private async fetchSpotQuote(): Promise<GoldSpotQuote | null> {
     try {
       const res = await fetch(GOLD_SPOT_API, { cache: 'no-store' })
       if (!res.ok) return null
-      const json = await res.json()
-      const price = Number(json?.price)
-      return Number.isFinite(price) && price > 0 ? price : null
+      const j = await res.json()
+      const price = Number(j?.price)
+      if (!Number.isFinite(price) || price <= 0) return null
+      return j as GoldSpotQuote
     } catch {
       return null
     }
   }
 
   private async pollGoldSpot() {
-    const spot = await this.fetchSpot()
-    if (spot === null) return
+    const quote = await this.fetchSpotQuote()
+    if (quote === null) {
+      this.goldFailStreak++
+      // never freeze silently: after 2 misses re-emit the last known tick
+      // flagged stale so the UI shows a DELAYED badge instead of a lie
+      if (this.goldFailStreak >= 2 && this.lastGoldTick) {
+        const last = this.lastGoldTick
+        this.dispatch('ticks', {
+          ts: Date.now(),
+          ticks: [{
+            ...last,
+            eventTime: Date.now(),
+            meta: {
+              source: last.meta?.source ?? 'unknown',
+              asOf: last.meta?.asOf ?? 0,
+              stale: true,
+              marketOpen: last.meta?.marketOpen ?? true,
+            },
+          }],
+        })
+      }
+      return
+    }
+    this.goldFailStreak = 0
+    const spot = quote.price
 
-    // 1) keep day stats fresh (for change% / high / low on tape + watchlist)
-    if (Date.now() - this.goldDayAt > 15 * 60_000) {
+    // 1) day stats: the spot route carries them; klines refresh is the backup
+    if (quote.open != null) {
+      this.goldDay = {
+        open: quote.open,
+        high: Math.max(quote.high ?? spot, spot),
+        low: Math.min(quote.low ?? spot, spot),
+      }
+      this.goldDayAt = Date.now()
+    } else if (Date.now() - this.goldDayAt > 15 * 60_000) {
       try {
         const res = await fetch(`/api/market/klines?symbol=${GOLD_SYMBOL}&interval=1d&limit=2`, { cache: 'no-store' })
         if (res.ok) {
@@ -532,7 +582,7 @@ class OracleFeeds {
       } catch { /* best-effort */ }
     }
 
-    // 2) live tick for tape / watchlist / header
+    // 2) live tick for tape / watchlist / header, with feed health
     const day = this.goldDay
     const open = day?.open ?? spot
     const tick: Ticker = {
@@ -545,7 +595,14 @@ class OracleFeeds {
       volume: 0,
       quoteVolume: 0,
       eventTime: Date.now(),
+      meta: {
+        source: quote.source,
+        asOf: quote.asOf,
+        stale: quote.stale,
+        marketOpen: quote.marketOpen,
+      },
     }
+    this.lastGoldTick = tick
     this.dispatch('ticks', { ts: Date.now(), ticks: [tick] })
 
     // 3) keep every subscribed gold chart's current candle alive
@@ -575,12 +632,12 @@ class OracleFeeds {
       const data = await res.json()
       const candles: Candle[] = Array.isArray(data?.candles) ? data.candles : []
       if (candles.length === 0) return
-      const spot = await this.fetchSpot()
+      const quote = await this.fetchSpotQuote()
       const last = candles[candles.length - 1]
-      if (spot !== null) {
-        last.close = spot
-        last.high = Math.max(last.high, spot)
-        last.low = Math.min(last.low, spot)
+      if (quote) {
+        last.close = quote.price
+        last.high = Math.max(last.high, quote.price)
+        last.low = Math.min(last.low, quote.price)
       }
       this.goldCandles.set(interval, last)
       for (const c of candles.slice(-2)) {

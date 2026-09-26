@@ -2,7 +2,8 @@
 
 > ## Already deployed? Apply this update (2 minutes)
 >
-> This package includes the **real spot gold + smarter predictions update** (Sep 25, 2026, second batch):
+> This package includes the **gold feed hardening update** (Sep 25, 2026, third batch, on top of the real-spot-gold + smarter-predictions update):
+> - **The gold price can never silently freeze again.** What happened: the free spot-gold provider changed their API today and the price froze at the last quote. This build fixes that at the root. The live quote now runs through your own server with a failover chain (gold-api -> COMEX-anchored -> PAXG) and every quote carries its age. If data ever falls behind while the market is open, the app tells you honestly: the chart badge, tape and watchlist show **DELAYED** (amber) instead of pretending a frozen number is live. When spot gold closes for the weekend they show **CLOSED**, because Friday's close is the truth then.
 > - **Gold is now REAL spot XAU/USD**, the metal your broker quotes. It is no longer the PAXG crypto token. The live price comes from a real spot-gold feed and the candle history is COMEX gold re-anchored to that spot price, so the chart levels match what you see on your broker's XAU/USD chart. Existing watchlists migrate automatically (PAXGUSDT rows become XAUUSD).
 > - **Predictions got a memory and a clock.** Every verdict now tells you: why (technicals + the actual news headline + the recurring pattern 20 years of trading says this setup rhymes with), how it fits the **higher timeframe** trend (so a 15m call no longer looks like it randomly contradicts the 1h call, it explains itself), and a **trade window**: how long the setup stays valid and when to cut the trade if TP1 is not hit.
 >
@@ -11,7 +12,7 @@
 > 2. In VSCode's terminal:
 >    ```bash
 >    git add .
->    git commit -m "real spot gold XAUUSD, predictions with reasons + trade windows"
+>    git commit -m "gold feed hardening: multi-source failover, delayed/closed badges"
 >    git push
 >    ```
 > 3. Vercel redeploys automatically (watch it under Deployments). Done.
