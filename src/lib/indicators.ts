@@ -294,6 +294,26 @@ export function trendBias(candles: Candle[]): string | null {
   return 'mixed'
 }
 
+// ── compact quantitative read of ONE timeframe (ladder building block) ──
+// Deterministic indicator math only: the same candles always produce the same
+// read, so the ladder can be shown next to every verdict as hard ground truth.
+export function quantTfRead(candles: Candle[]): {
+  bias: 'bullish' | 'bearish' | 'mixed' | null
+  structure: string
+  rsi: number | null
+} {
+  if (candles.length < 55) return { bias: null, structure: 'insufficient data', rsi: null }
+  const closes = candles.map((c) => c.close)
+  const rsiSeries = rsi(closes, 14)
+  const lastRsi = rsiSeries[rsiSeries.length - 1] ?? null
+  const biasRaw = trendBias(candles)
+  return {
+    bias: biasRaw === 'bullish' || biasRaw === 'bearish' ? biasRaw : 'mixed',
+    structure: marketStructure(candles.slice(-120)),
+    rsi: lastRsi !== null ? Math.round(lastRsi * 10) / 10 : null,
+  }
+}
+
 // ─── Master snapshot builder ─────────────────────────────────────────────────
 export function buildSnapshot(
   symbol: string,

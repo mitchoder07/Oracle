@@ -1,7 +1,7 @@
-import type { AISignal, AnalysisResult, TechnicalSnapshot } from './types'
+import type { AISignal, AnalysisResult, TechnicalSnapshot, TfLadderEntry } from './types'
 import { fetchKlines, fetchTickers } from './market-data'
-import { buildSnapshot, rulesSignal } from './indicators'
-import { canonicalSymbol, getSymbolMeta, HTF_MAP } from './markets'
+import { buildSnapshot, rulesSignal, quantTfRead } from './indicators'
+import { canonicalSymbol, getSymbolMeta, HTF_MAP, TF_LADDER } from './markets'
 import { getMarketSession, sessionPromptLine } from './sessions'
 import { searchSymbolNews } from './news'
 import { extractJson } from './news'
@@ -50,7 +50,7 @@ Respond with ONLY one valid JSON object. No markdown fences, no commentary befor
 }
 Rules:
 - rationale must contain 4-6 specific bullets that reference actual numbers from the snapshot. At least one bullet must cite technical structure/levels, and when news headlines are provided at least one must tie to a headline.
-- MULTI-TIMEFRAME COHERENCE: the snapshot's trend.htfTrend field is the higher-timeframe trend (its timeframe is stated in the prompt). If your call FIGHTS the higher-timeframe trend, you must say so in mtfView, cap confidence at 45, and frame the trade as a counter-trend play with reduced size. If the trading timeframe and higher timeframe agree, say so and let confidence reflect the confluence. A call that silently contradicts the bigger trend without acknowledging it is a failure.
+- MULTI-TIMEFRAME COHERENCE: the prompt contains a TIMEFRAME LADDER: the deterministic quantitative trend read of every timeframe (1m through 1d), computed from the same live candles. Read it the way a professional does: the rungs above your trading timeframe set the bias you trade WITH, the rungs below only time your entry. If your verdict fights the dominant bias of the higher rungs, you must say so in mtfView, cap confidence at 45, and frame it as a counter-trend play with reduced size and a faster target. If the higher rungs are mixed, that itself is information: lean KEEP_OFF or frame it as a range play. Different timeframes may honestly show different pictures (a 5m bounce inside a 1h downtrend is normal), but every verdict must explicitly state where it sits in the ladder, so your verdicts across timeframes read as one coherent story, never as independent opinions. The engine independently checks your verdict against the ladder and will cap and label anything that fights it, so respect the check.
 - experienceNote must name a concrete recurring pattern (for example: pullback-to-EMA continuation, failed breakout retest, RSI divergence at range extremes, news-spike fade) and why it applies here. No vague "experience says".
 - validHours must match the timeframe's realistic play-out speed: roughly 2-6h for 1m/5m charts, 6-24h for 15m/30m, 12-48h for 1h, 2-7 days for 4h, 1-4 weeks for 1d, and several weeks/months for 1w/1M.
 - tradeWindow must give the trader a hard cut rule, for example: "Enter on the retest; if TP1 isn't hit within 8 hours, close at market and reassess." Never leave a trade open-ended.
@@ -60,6 +60,81 @@ Rules:
 
 // short-lived cache so repeated UI calls don't re-bill the LLM
 const resultCache = new Map<string, { result: AnalysisResult; until: number }>()
+
+// ── multi-timeframe ladder ──────────────────────────────────────────────
+// Every timeframe of a symbol read TOGETHER with deterministic indicator
+// math (EMA stack + market structure + RSI on the same live candles). This
+// is ground truth, not an LLM opinion: the verdict is checked against it,
+// and the UI shows it so verdicts across timeframes read as one story
+// instead of feeling like random flip-flopping when you switch charts.
+const ladderCache = new Map<string, { ladder: TfLadderEntry[]; at: number }>()
+const LADDER_TTL_MS = 60_000
+
+export async function buildTfLadder(symbol: string): Promise<TfLadderEntry[]> {
+  const hit = ladderCache.get(symbol)
+  if (hit && Date.now() - hit.at < LADDER_TTL_MS) return hit.ladder
+  const results = await Promise.allSettled(TF_LADDER.map((tf) => fetchKlines(symbol, tf, 160)))
+  const ladder: TfLadderEntry[] = TF_LADDER.map((tf, i) => {
+    const r = results[i]
+    if (r.status !== 'fulfilled' || !Array.isArray(r.value) || r.value.length < 55) {
+      return { tf, bias: null, structure: 'insufficient data', rsi: null }
+    }
+    return { tf, ...quantTfRead(r.value) }
+  })
+  ladderCache.set(symbol, { ladder, at: Date.now() })
+  return ladder
+}
+
+/** How a directional signal relates to the rungs strictly above the trading timeframe. */
+function ladderRelation(
+  signal: 'LONG' | 'SHORT',
+  ladder: TfLadderEntry[],
+  timeframe: string
+): { higher: TfLadderEntry[]; fights: number; aligns: number; oppositeTfs: string[] } {
+  const idx = TF_LADDER.indexOf(timeframe)
+  const higher = idx >= 0 ? ladder.filter((e) => TF_LADDER.indexOf(e.tf) > idx) : []
+  const opposite = signal === 'LONG' ? 'bearish' : 'bullish'
+  const side = signal === 'LONG' ? 'bullish' : 'bearish'
+  const oppositeTfs = higher.filter((e) => e.bias === opposite).map((e) => e.tf)
+  const aligns = higher.filter((e) => e.bias === side).length
+  return { higher, fights: oppositeTfs.length, aligns, oppositeTfs }
+}
+
+/** Dominant bias of a set of ladder rungs (60% of directional votes wins). */
+function dominantOf(entries: TfLadderEntry[]): 'bullish' | 'bearish' | 'mixed' {
+  const bulls = entries.filter((e) => e.bias === 'bullish').length
+  const bears = entries.filter((e) => e.bias === 'bearish').length
+  const d = bulls + bears
+  if (d === 0) return 'mixed'
+  if (bulls / d >= 0.6) return 'bullish'
+  if (bears / d >= 0.6) return 'bearish'
+  return 'mixed'
+}
+
+/** Ladder as prompt lines (reused by the chat context builder). */
+export function ladderPromptLines(ladder: TfLadderEntry[], timeframe?: string): string {
+  const rows = ladder.map((e) => {
+    const bias = e.bias ?? 'n/a'
+    const extras = [
+      e.structure.split(' (')[0],
+      e.rsi !== null ? `RSI ${e.rsi}` : null,
+    ]
+      .filter(Boolean)
+      .join(', ')
+    return `- ${e.tf}: ${bias}${extras ? ` (${extras})` : ''}`
+  })
+  let out = rows.join('\n')
+  if (timeframe) {
+    const idx = TF_LADDER.indexOf(timeframe)
+    const higher = idx >= 0 ? ladder.filter((e) => TF_LADDER.indexOf(e.tf) > idx) : []
+    if (higher.length > 0) {
+      out += `\nDOMINANT BIAS of the ${higher.length} rungs above your ${timeframe} trading timeframe: ${dominantOf(higher)}.`
+    } else {
+      out += `\nYour ${timeframe} trading timeframe sits at the top of the ladder; there are no higher rungs.`
+    }
+  }
+  return out
+}
 
 export async function analyzeSymbol(
   symbolInput: string,
@@ -77,10 +152,11 @@ export async function analyzeSymbol(
 
   // 1) data (skip HTF fetch when the timeframe has no higher timeframe, e.g. 1M)
   const htfTf = HTF_MAP[timeframe] ?? '4h'
-  const [candles, htfCandles, tickers] = await Promise.all([
+  const [candles, htfCandles, tickers, ladder] = await Promise.all([
     fetchKlines(symbol, timeframe, 300),
     htfTf !== timeframe ? fetchKlines(symbol, htfTf, 200).catch(() => null) : Promise.resolve(null),
     fetchTickers([symbol, 'BTCUSDT']),
+    buildTfLadder(symbol).catch(() => [] as TfLadderEntry[]),
   ])
   const ticker = tickers.get(symbol) ?? null
   const btc = tickers.get('BTCUSDT') ?? null
@@ -95,8 +171,13 @@ export async function analyzeSymbol(
     newsHeadlines = articles.map((a) => `${a.title} (${a.source})`)
   } catch { /* news is best-effort */ }
 
-  // 4) LLM verdict (with rules-engine fallback)
-  const { ai, source } = await callOracle(snapshot, newsHeadlines, htfTf)
+  // 4) deterministic ladder context: how the higher rungs stack right now
+  const ladderIdx = TF_LADDER.indexOf(timeframe)
+  const higherLadder = ladderIdx >= 0 ? ladder.filter((e) => TF_LADDER.indexOf(e.tf) > ladderIdx) : []
+  const dominant = dominantOf(higherLadder)
+
+  // 5) LLM verdict (with rules-engine fallback), checked against the ladder
+  const { ai, source, counterTrend } = await callOracle(snapshot, newsHeadlines, htfTf, ladder, dominant)
 
   const result: AnalysisResult = {
     symbol,
@@ -108,6 +189,9 @@ export async function analyzeSymbol(
     source,
     newsHeadlines,
     analyzedAt: new Date().toISOString(),
+    tfLadder: ladder,
+    dominantBias: dominant,
+    counterTrend,
   }
 
   resultCache.set(key, { result, until: Date.now() + 120_000 })
@@ -141,8 +225,10 @@ const FALLBACK_VALID_HOURS: Record<string, number> = {
 async function callOracle(
   snapshot: TechnicalSnapshot,
   newsHeadlines: string[],
-  htfTf: string
-): Promise<{ ai: AISignal; source: 'llm' | 'rules' | 'llm-repaired' }> {
+  htfTf: string,
+  ladder: TfLadderEntry[],
+  dominant: 'bullish' | 'bearish' | 'mixed'
+): Promise<{ ai: AISignal; source: 'llm' | 'rules' | 'llm-repaired'; counterTrend: boolean }> {
   const userPrompt = `CURRENT TIME & MARKET SESSION:
 ${sessionPromptLine()}
 ${sessionNoteFor(snapshot.symbol)}
@@ -150,7 +236,10 @@ ${sessionNoteFor(snapshot.symbol)}
 CHART SNAPSHOT (${snapshot.symbol}, ${snapshot.timeframe} timeframe):
 ${JSON.stringify(snapshot, null, 1)}
 
-HIGHER-TIMEFRAME CONTEXT: the trend.htfTrend field above is the ${htfTf} trend. Your ${snapshot.timeframe} verdict must state how it fits that ${htfTf} bias in mtfView, and follow the multi-timeframe coherence rule.
+TIMEFRAME LADDER (deterministic quantitative read of every timeframe, computed from the same live candles; ground truth, not opinion):
+${ladderPromptLines(ladder, snapshot.timeframe)}
+
+HIGHER-TIMEFRAME CONTEXT: the trend.htfTrend field above is the ${htfTf} trend, and the ladder above shows every timeframe side by side. Your ${snapshot.timeframe} verdict must state how it fits the ladder in mtfView, and follow the multi-timeframe coherence rule. The engine independently checks your verdict against the ladder: a signal fighting 2 or more of the higher rungs gets its confidence capped and is labeled counter-trend no matter what you write.
 
 RECENT NEWS HEADLINES:
 ${newsHeadlines.length ? newsHeadlines.map((h, i) => `${i + 1}. ${h}`).join('\n') : '(none available)'}
@@ -171,8 +260,8 @@ Give your professional verdict as the JSON object per the schema.`
       const raw = completion.choices[0]?.message?.content ?? ''
       const json = extractJson(raw)
       const parsed = JSON.parse(json)
-      const ai = sanitizeSignal(parsed, snapshot)
-      if (ai) return { ai, source: attempt === 0 ? 'llm' : 'llm-repaired' }
+      const sane = sanitizeSignal(parsed, snapshot, { ladder, dominant })
+      if (sane) return { ai: sane.ai, source: attempt === 0 ? 'llm' : 'llm-repaired', counterTrend: sane.counterTrend }
     } catch (e) {
       console.error(`[oracle] LLM attempt ${attempt + 1} failed:`, (e as Error).message)
     }
@@ -183,6 +272,10 @@ Give your professional verdict as the JSON object per the schema.`
   const meta = getSymbolMeta(snapshot.symbol)
   const validHours = fb.signal === 'KEEP_OFF' ? null : (FALLBACK_VALID_HOURS[snapshot.timeframe] ?? 24)
   const htf = snapshot.trend.htfTrend ?? 'unknown'
+  const rel =
+    fb.signal === 'LONG' || fb.signal === 'SHORT' ? ladderRelation(fb.signal, ladder, snapshot.timeframe) : null
+  const counterTrend = !!rel && rel.fights >= 2
+  if (counterTrend && fb.confidence > 45) fb.confidence = 45
   const aligns =
     (fb.signal === 'LONG' && htf === 'bullish') || (fb.signal === 'SHORT' && htf === 'bearish')
   const fights =
@@ -205,13 +298,15 @@ Give your professional verdict as the JSON object per the schema.`
           ? `Conditions are mixed. Re-check this pair after the next few ${snapshot.timeframe} candles close.`
           : `Treat the setup as live for the next ${validHours}h. If TP1 is not reached within ${Math.round((validHours ?? 24) * 0.75)}h, close the position at market and wait for a cleaner setup.`,
       mtfView:
-        fb.signal === 'KEEP_OFF'
-          ? `The ${htfTf} trend reads ${htf}; the ${snapshot.timeframe} picture is mixed, so there is no edge either way right now.`
-          : fights
-            ? `Heads up: this ${snapshot.timeframe} ${fb.signal} fights the ${htfTf} trend (${htf}). Treat it as a counter-trend scalp with reduced size, or skip it.`
-            : aligns
-              ? `This ${snapshot.timeframe} ${fb.signal} trades with the ${htfTf} trend (${htf}), which is the side you want to be on.`
-              : `The ${htfTf} trend reads ${htf}; this ${snapshot.timeframe} call is neutral to it.`,
+        rel && rel.fights >= 2
+          ? `Heads up: this ${snapshot.timeframe} ${fb.signal} fights ${rel.fights} of the ${rel.higher.length} higher timeframes (${rel.oppositeTfs.join(', ')}). Treat it as a counter-trend scalp with half size, or skip it.`
+          : fb.signal === 'KEEP_OFF'
+            ? `The ${htfTf} trend reads ${htf}; the ${snapshot.timeframe} picture is mixed, so there is no edge either way right now.`
+            : fights
+              ? `Heads up: this ${snapshot.timeframe} ${fb.signal} fights the ${htfTf} trend (${htf}). Treat it as a counter-trend scalp with reduced size, or skip it.`
+              : aligns
+                ? `This ${snapshot.timeframe} ${fb.signal} trades with the ${htfTf} trend (${htf}), which is the side you want to be on.`
+                : `The ${htfTf} trend reads ${htf}; this ${snapshot.timeframe} call is neutral to it.`,
       experienceNote:
         fb.signal === 'KEEP_OFF'
           ? 'Choppy, indicator-heavy conditions like this are where beginners bleed out. The veteran move is to wait for the range to resolve before committing money.'
@@ -231,6 +326,7 @@ Give your professional verdict as the JSON object per the schema.`
       riskWarning: 'Signals are opinions, not guarantees. Size positions responsibly.',
     },
     source: 'rules',
+    counterTrend,
   }
 }
 
@@ -257,8 +353,17 @@ function computeFallbackTp(signal: 'LONG' | 'SHORT', snap: TechnicalSnapshot, rr
   return signal === 'LONG' ? entry + risk * rr : entry - risk * rr
 }
 
-// validate + repair the LLM's JSON into a safe AISignal
-function sanitizeSignal(parsed: any, snap: TechnicalSnapshot): AISignal | null {
+// validate + repair the LLM's JSON into a safe AISignal (exported for tests)
+interface LadderGuard {
+  ladder: TfLadderEntry[]
+  dominant: 'bullish' | 'bearish' | 'mixed'
+}
+
+export function sanitizeSignal(
+  parsed: any,
+  snap: TechnicalSnapshot,
+  guard?: LadderGuard
+): { ai: AISignal; counterTrend: boolean } | null {
   if (!parsed || typeof parsed !== 'object') return null
   const rawSignal = String(parsed.signal ?? '').toUpperCase()
   if (rawSignal !== 'LONG' && rawSignal !== 'SHORT' && rawSignal !== 'KEEP_OFF') return null
@@ -287,6 +392,22 @@ function sanitizeSignal(parsed: any, snap: TechnicalSnapshot): AISignal | null {
   let confidence = Math.round(Number(parsed.confidence))
   if (!Number.isFinite(confidence)) confidence = 50
   confidence = Math.max(0, Math.min(100, confidence))
+
+  // HARD LADDER GUARD (deterministic, cannot be argued away by the LLM):
+  // a signal that fights 2+ of the higher rungs is capped and loudly labeled
+  // counter-trend, so the same symbol can never again show a confident 5m
+  // LONG next to a 1h SHORT without the relationship being spelled out.
+  let counterTrend = false
+  let guardNote = ''
+  if (guard && (signal === 'LONG' || signal === 'SHORT')) {
+    const rel = ladderRelation(signal, guard.ladder, snap.timeframe)
+    if (rel.fights >= 2) {
+      counterTrend = true
+      const cap = rel.fights >= 3 ? 38 : 45
+      if (confidence > cap) confidence = cap
+      guardNote = `Ladder check: this ${snap.timeframe} ${signal} fights ${rel.fights} of ${rel.higher.length} higher timeframes (${rel.oppositeTfs.join(', ')}). It is a counter-trend trade: half size, faster target, or skip.`
+    }
+  }
 
   if (signal === 'KEEP_OFF') {
     entry = null; stopLoss = null; takeProfit1 = null; takeProfit2 = null; entryZone = null
@@ -336,6 +457,9 @@ function sanitizeSignal(parsed: any, snap: TechnicalSnapshot): AISignal | null {
   const tradeWindow = String(parsed.tradeWindow ?? '').trim()
   const mtfView = String(parsed.mtfView ?? '').trim()
   const experienceNote = String(parsed.experienceNote ?? '').trim()
+  const mtfViewFinal = guardNote
+    ? `${guardNote} ${mtfView}`.slice(0, 420)
+    : mtfView.slice(0, 300) || 'Higher-timeframe context was not provided for this scan.'
 
   const levels = {
     support: Array.isArray(parsed.keyLevels?.support)
@@ -346,7 +470,7 @@ function sanitizeSignal(parsed: any, snap: TechnicalSnapshot): AISignal | null {
       : snap.keyLevels.resistance,
   }
 
-  return {
+  const ai: AISignal = {
     signal,
     confidence,
     bias: ['bullish', 'bearish', 'neutral'].includes(parsed.bias) ? parsed.bias : 'neutral',
@@ -363,7 +487,7 @@ function sanitizeSignal(parsed: any, snap: TechnicalSnapshot): AISignal | null {
       (signal === 'KEEP_OFF'
         ? 'No trade. Re-check after the next few candles close.'
         : `Setup is live for the next ${validHours}h. If TP1 is not hit within ${Math.round((validHours ?? 24) * 0.75)}h, close at market.`),
-    mtfView: mtfView.slice(0, 300) || 'Higher-timeframe context was not provided for this scan.',
+    mtfView: mtfViewFinal,
     experienceNote:
       experienceNote.slice(0, 400) ||
       'No specific historical analogue was cited for this verdict; treat it as a fresh technical read.',
@@ -374,4 +498,5 @@ function sanitizeSignal(parsed: any, snap: TechnicalSnapshot): AISignal | null {
     newsImpact: String(parsed.newsImpact ?? '').slice(0, 400) || 'neutral',
     riskWarning: String(parsed.riskWarning ?? '').slice(0, 400) || 'Manage risk; signals are probabilistic.',
   }
+  return { ai, counterTrend }
 }

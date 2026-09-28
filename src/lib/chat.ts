@@ -1,10 +1,11 @@
-import type { Candle, Ticker } from './types'
+import type { Candle, Ticker, TfLadderEntry } from './types'
 import { fetchKlines, fetchTickers } from './market-data'
 import { buildSnapshot } from './indicators'
 import { canonicalSymbol, getSymbolMeta } from './markets'
 import { getMarketSession, sessionPromptLine } from './sessions'
 import { searchNews } from './news'
 import { getZAI, visionModel } from './zai'
+import { buildTfLadder, ladderPromptLines } from './analyst'
 
 // ─── AI trader chat with live market context + chart-image vision ────────────
 
@@ -34,6 +35,7 @@ When you give a trade view on a pair:
 - Always attach the reasoning: the technical levels that matter, any relevant news headline, and the pattern your 20 years of experience says this setup rhymes with. Never give a bare LONG/SHORT with no why.
 - Always give a validity window: how long the setup stays live and when to cut the trade if the first target is not hit (for example: "if TP1 isn't hit within 8 hours, close at market"). An open-ended trade idea is not professional.
 - When the user asks about a timeframe, relate it to the bigger trend: say whether the 15m call trades with or against the 4h/1d bias.
+- A TIMEFRAME LADDER is provided in the live context: the deterministic trend read of every timeframe (1m through 1d) computed from the same candles. Treat it as ground truth. When you give a directional view, name which rung of the ladder you're trading and whether it is with the dominant bias or an explicit counter-trend scalp (reduced size, faster target). Never contradict the ladder silently, and never answer a direction question as if each timeframe lived in its own world.
 
 Style rules:
 - NEVER use em dashes (—) or en dashes (–) anywhere in your replies. Not once. Use a comma, a period or parentheses instead. This is a hard rule that overrides every other style preference.
@@ -56,10 +58,11 @@ export async function chatWithTrader(
     try {
       const symbol = canonicalSymbol(contextSymbol)
       const meta = getSymbolMeta(symbol)
-      const [candles, tickers, news] = await Promise.all([
+      const [candles, tickers, news, ladder] = await Promise.all([
         fetchKlines(symbol, timeframe ?? '1h', 200),
         fetchTickers([symbol, 'BTCUSDT']),
         searchNews(meta.market === 'FOREX' ? 'FOREX' : meta.market === 'METAL' ? 'METAL' : 'CRYPTO').catch(() => []),
+        buildTfLadder(symbol).catch(() => [] as TfLadderEntry[]),
       ])
       const ticker: Ticker | undefined = tickers.get(symbol)
       const btc: Ticker | undefined = tickers.get('BTCUSDT')
@@ -93,6 +96,8 @@ LIVE CONTEXT for ${meta.displaySymbol} (${meta.name}), ${timeframe ?? '1h'} time
 - Patterns: ${snapshot.patterns.join(', ') || 'none notable'}
 - Nearest support: ${snapshot.keyLevels.support[0] ?? 'n/a'} | resistance: ${snapshot.keyLevels.resistance[0] ?? 'n/a'}
 - BTC 24h (market beta): ${btc?.changePct?.toFixed(2) ?? 'n/a'}%
+TIMEFRAME LADDER (deterministic, computed from the same live candles; ground truth):
+${ladderPromptLines(ladder, timeframe ?? '1h') || '(unavailable)'}
 Latest headlines:
 ${headlines || '(none)'}`
     } catch (e) {

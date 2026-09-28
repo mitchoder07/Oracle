@@ -2,17 +2,17 @@
 
 > ## Already deployed? Apply this update (2 minutes)
 >
-> This package includes the **gold feed hardening update** (Sep 25, 2026, third batch, on top of the real-spot-gold + smarter-predictions update):
-> - **The gold price can never silently freeze again.** What happened: the free spot-gold provider changed their API today and the price froze at the last quote. This build fixes that at the root. The live quote now runs through your own server with a failover chain (gold-api -> COMEX-anchored -> PAXG) and every quote carries its age. If data ever falls behind while the market is open, the app tells you honestly: the chart badge, tape and watchlist show **DELAYED** (amber) instead of pretending a frozen number is live. When spot gold closes for the weekend they show **CLOSED**, because Friday's close is the truth then.
-> - **Gold is now REAL spot XAU/USD**, the metal your broker quotes. It is no longer the PAXG crypto token. The live price comes from a real spot-gold feed and the candle history is COMEX gold re-anchored to that spot price, so the chart levels match what you see on your broker's XAU/USD chart. Existing watchlists migrate automatically (PAXGUSDT rows become XAUUSD).
-> - **Predictions got a memory and a clock.** Every verdict now tells you: why (technicals + the actual news headline + the recurring pattern 20 years of trading says this setup rhymes with), how it fits the **higher timeframe** trend (so a 15m call no longer looks like it randomly contradicts the 1h call, it explains itself), and a **trade window**: how long the setup stays valid and when to cut the trade if TP1 is not hit.
+> This package includes the **timeframe-consistency update** (Sep 28, 2026, fourth batch, on top of the gold feed hardening update):
+> - **"5m says LONG but 1h says SHORT" now makes sense instead of looking random.** What happened before: each timeframe was analyzed in isolation, so switching charts felt like the AI changing its mind. This build fixes it the way a professional reads a market. Every verdict now ships with a **TIMEFRAME LADDER**: a deterministic read of all six timeframes (1m through 1d) computed from the same live candles, shown as a strip of chips right under the verdict. You see at a glance that, say, 5m is bouncing up inside a bearish 1h/4h, and the verdict says out loud whether it trades WITH the dominant bias or is an explicit counter-trend scalp.
+> - **A hard consistency guard.** If a verdict fights 2 or more of the higher timeframes, the engine itself (not just the AI's word) caps the confidence at 45 (38 if it fights 3+), slaps a **COUNTER-TREND** badge on it, and prepends a plain warning naming exactly which rungs it fights. The AI chat sees the same ladder, so the chat can no longer contradict the panels.
+> - Also in this package: the gold feed hardening batch (multi-source failover, DELAYED/CLOSED badges, the frozen-price fix) and the real spot XAU/USD + prediction-reasons batch.
 >
 > To update your existing GitHub + Vercel deployment:
 > 1. Unzip this package **over your existing project folder** (keep your `.git` folder and `.env` file, they are not inside the zip).
 > 2. In VSCode's terminal:
 >    ```bash
 >    git add .
->    git commit -m "gold feed hardening: multi-source failover, delayed/closed badges"
+>    git commit -m "timeframe ladder: cross-timeframe consistency + counter-trend guard"
 >    git push
 >    ```
 > 3. Vercel redeploys automatically (watch it under Deployments). Done.

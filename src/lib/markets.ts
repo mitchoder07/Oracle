@@ -141,6 +141,11 @@ export const HTF_MAP: Record<string, string> = {
   '1M': '1M', // no higher timeframe — callers must skip self-mapped
 }
 
+// The multi-timeframe ladder: every timeframe read together so verdicts across
+// timeframes read as ONE story (a 5m long inside a 1h downtrend is a labeled
+// counter-trend scalp, never a confusing contradiction).
+export const TF_LADDER = ['1m', '5m', '15m', '1h', '4h', '1d']
+
 // legacy symbol → current symbol (rows persisted in older DBs)
 export const LEGACY_SYMBOL_MAP: Record<string, string> = {
   PAXGUSDT: 'XAUUSD', // gold used to be the PAXG token; now real spot XAU/USD

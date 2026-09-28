@@ -133,6 +133,30 @@ export function SignalPanel({ analysis, analyzing, onReanalyze }: Props) {
   const verdictLabel = ai.signal === 'LONG' ? 'GO LONG' : ai.signal === 'SHORT' ? 'GO SHORT' : 'KEEP OFF'
   const timeAgo = Math.max(0, Math.round((Date.now() - new Date(analysis.analyzedAt).getTime()) / 60000))
 
+  // ── timeframe ladder: how every timeframe stacks right now ──
+  const LADDER_ORDER = ['1m', '5m', '15m', '1h', '4h', '1d']
+  const ladder = analysis.tfLadder ?? []
+  const tfIdx = LADDER_ORDER.indexOf(analysis.timeframe)
+  const higher = tfIdx >= 0 ? ladder.filter((e) => LADDER_ORDER.indexOf(e.tf) > tfIdx) : []
+  const side = ai.signal === 'LONG' ? 'bullish' : 'bearish'
+  const fights = higher.filter((e) => e.bias === (ai.signal === 'LONG' ? 'bearish' : 'bullish')).length
+  const aligns = higher.filter((e) => e.bias === side).length
+  let ladderLine: string
+  let ladderTone = 'text-zinc-500'
+  if (tfIdx < 0 || higher.length === 0) {
+    ladderLine = 'This timeframe sits above the ladder; judge it on its own structure.'
+  } else if (!isTrade) {
+    ladderLine = `Higher timeframes read ${analysis.dominantBias ?? 'mixed'}; no trade is on, so the ladder is context for when one appears.`
+  } else if (fights >= 2) {
+    ladderLine = `This ${analysis.timeframe} ${verdictLabel} fights ${fights} of ${higher.length} higher timeframes. Counter-trend scalp: half size, fast target, or skip.`
+    ladderTone = 'text-amber-300/90'
+  } else if (aligns >= 2) {
+    ladderLine = `Trades with the dominant ${analysis.dominantBias ?? side} ladder (${aligns} of ${higher.length} higher timeframes agree).`
+    ladderTone = 'text-emerald-300/80'
+  } else {
+    ladderLine = `Higher timeframes are mixed (${aligns} with, ${fights} against), so this is a range read, not a trend ride.`
+  }
+
   // human-friendly validity: "~36h" → "1.5 days", "~8h" → "8h"
   const validLabel =
     ai.validHours === null
@@ -188,8 +212,16 @@ export function SignalPanel({ analysis, analyzing, onReanalyze }: Props) {
                 >
                   {verdictLabel}
                 </span>
+                {analysis.counterTrend && (
+                  <Badge
+                    variant="outline"
+                    className="h-4 border-amber-500/40 bg-amber-500/10 px-1.5 text-[8px] font-bold uppercase tracking-wide text-amber-400"
+                  >
+                    Counter-trend
+                  </Badge>
+                )}
                 <span className="num text-[10px] text-zinc-500">
-                  {meta.displaySymbol} · {timeframe} · {ai.timeHorizon}
+                  {meta.displaySymbol} · {analysis.timeframe} · {ai.timeHorizon}
                 </span>
               </div>
               <p className="mt-2 text-xs leading-relaxed text-zinc-300">{ai.summary}</p>
@@ -198,6 +230,61 @@ export function SignalPanel({ analysis, analyzing, onReanalyze }: Props) {
                 <div className="mt-2 flex items-start gap-1.5 rounded-md border border-zinc-800/80 bg-zinc-900/40 px-2 py-1.5">
                   <Layers className="mt-0.5 h-3 w-3 shrink-0 text-sky-400/80" aria-hidden="true" />
                   <p className="text-[11px] leading-relaxed text-zinc-400">{ai.mtfView}</p>
+                </div>
+              )}
+              {/* timeframe ladder: every timeframe side by side, so verdicts across
+                  timeframes read as one story instead of feeling random */}
+              {ladder.length > 0 && (
+                <div className="mt-2 rounded-md border border-zinc-800/80 bg-zinc-900/40 px-2 py-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
+                      Timeframe ladder
+                    </span>
+                    {analysis.dominantBias && analysis.dominantBias !== 'mixed' && (
+                      <span
+                        className={cn(
+                          'num rounded-full border px-1.5 py-0.5 text-[9px] font-bold',
+                          analysis.dominantBias === 'bullish'
+                            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                            : 'border-red-500/30 bg-red-500/10 text-red-400'
+                        )}
+                      >
+                        dominant {analysis.dominantBias}
+                      </span>
+                    )}
+                    {analysis.counterTrend && (
+                      <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-400">
+                        counter-trend
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {ladder.map((e) => {
+                      const isCurrent = e.tf === analysis.timeframe
+                      const arrow = e.bias === 'bullish' ? '▲' : e.bias === 'bearish' ? '▼' : '·'
+                      return (
+                        <span
+                          key={e.tf}
+                          title={`${e.tf}: ${e.bias ?? 'n/a'} · ${e.structure}${e.rsi !== null ? ` · RSI ${e.rsi}` : ''} (deterministic read of the live candles, same data as the chart)`}
+                          className={cn(
+                            'num rounded px-1.5 py-0.5 text-[10px] font-bold leading-none',
+                            e.bias === 'bullish'
+                              ? 'bg-emerald-500/15 text-emerald-400'
+                              : e.bias === 'bearish'
+                                ? 'bg-red-500/15 text-red-400'
+                                : 'bg-zinc-800/60 text-zinc-500',
+                            isCurrent && 'ring-1 ring-zinc-400/70'
+                          )}
+                        >
+                          {e.tf} {arrow}
+                        </span>
+                      )
+                    })}
+                  </div>
+                  <p className={cn('mt-1.5 text-[10px] leading-relaxed', ladderTone)}>{ladderLine}</p>
+                  <p className="mt-1 text-[9px] leading-relaxed text-zinc-600">
+                    Verdicts can honestly differ per timeframe (a 5m bounce inside a 1h downtrend is normal). The ladder shows how they stack, so read them together, not as contradictions.
+                  </p>
                 </div>
               )}
               {/* keep-off re-check hint */}

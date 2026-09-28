@@ -129,6 +129,14 @@ export interface AISignal {
   riskWarning: string
 }
 
+/** One rung of the multi-timeframe ladder attached to every verdict. */
+export interface TfLadderEntry {
+  tf: string
+  bias: 'bullish' | 'bearish' | 'mixed' | null   // deterministic EMA/structure read
+  structure: string                               // e.g. 'LH/LL (downtrend structure)'
+  rsi: number | null
+}
+
 export interface AnalysisResult {
   symbol: string
   displaySymbol: string
@@ -139,6 +147,9 @@ export interface AnalysisResult {
   source: 'llm' | 'rules' | 'llm-repaired'
   newsHeadlines: string[]
   analyzedAt: string
+  tfLadder?: TfLadderEntry[]                      // every timeframe read together
+  dominantBias?: 'bullish' | 'bearish' | 'mixed'  // dominant bias of the higher rungs
+  counterTrend?: boolean                          // verdict fights the dominant bias
 }
 
 export interface NewsArticle {

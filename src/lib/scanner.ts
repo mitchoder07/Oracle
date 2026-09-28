@@ -112,16 +112,18 @@ export async function recordSignal(
         result.ai.signal === 'KEEP_OFF'
           ? `${meta.displaySymbol} ${timeframe}: Stand aside, no trade (conviction ${result.ai.confidence}%)`
           : result.ai.signal === 'LONG'
-            ? `${meta.displaySymbol} ${timeframe}: GO LONG ${result.ai.confidence}%`
-            : `${meta.displaySymbol} ${timeframe}: GO SHORT ${result.ai.confidence}%`
+            ? `${meta.displaySymbol} ${timeframe}: GO LONG ${result.ai.confidence}%${result.counterTrend ? ' (counter-trend)' : ''}`
+            : `${meta.displaySymbol} ${timeframe}: GO SHORT ${result.ai.confidence}%${result.counterTrend ? ' (counter-trend)' : ''}`
       notification = await db.notification.create({
         data: {
           type: 'SIGNAL',
           symbol,
           title,
-          body: result.ai.tradeWindow
-            ? `${result.ai.summary} ${result.ai.tradeWindow}`
-            : result.ai.summary,
+          body: (
+            result.ai.tradeWindow
+              ? `${result.ai.summary} ${result.ai.tradeWindow}`
+              : result.ai.summary
+          ) + (result.counterTrend ? ' This is a counter-trend call: reduce size and take the faster target.' : ''),
           signal: result.ai.signal,
           confidence: result.ai.confidence,
         },
