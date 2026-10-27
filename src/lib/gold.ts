@@ -5,11 +5,15 @@ import { isMetalClosed } from './sessions'
 // ─── Real spot gold (XAU/USD) market data ────────────────────────────────────
 // Gold on this terminal is the REAL spot forex metal, not a crypto token.
 //   • Live spot price, multi-source with automatic failover (a single dead
-//     provider must never freeze the price silently):
-//       1. gold-api.com (keyless, true XAU/USD spot, CORS-open)
-//       2. COMEX gold futures (Yahoo, keyless) shifted by the tracked
+//     provider must never freeze the price silently). Failover order:
+//       1. Swissquote public BBO (keyless, true institutional spot bid/ask,
+//          live timestamps, the same class of feed a broker chart runs on)
+//       2. gold-api.com (keyless, true XAU/USD spot)
+//       3. Twelve Data XAU/USD spot (free key, 800 calls/day)
+//       4. COMEX gold futures (Yahoo, keyless) shifted by the tracked
 //          spot-minus-futures basis: moves tick for tick with spot
-//       3. PAXG token (Binance, keyless): real traded gold, 24/7
+//       5. PAXG token (Binance, keyless): real traded gold, 24/7, but carries
+//          its own premium/discount versus spot, so it is a last resort
 //     Every quote carries its age (asOf) and a stale flag so the UI can show
 //     DELAYED instead of pretending a frozen number is live.
 //   • Candle history, in order of preference:
@@ -26,6 +30,7 @@ import { isMetalClosed } from './sessions'
 //     While closed, prices are frozen at Friday's close (like any broker).
 
 const SPOT_API = 'https://api.gold-api.com/price/XAU'
+const SWISSQUOTE_API = 'https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD'
 const YAHOO_HOSTS = ['https://query2.finance.yahoo.com', 'https://query1.finance.yahoo.com']
 const TWELVE_API = 'https://api.twelvedata.com/time_series'
 const UA =
@@ -33,8 +38,22 @@ const UA =
 
 // a quote older than this while the market is open is treated as DELAYED
 const STALE_AFTER_MS = 3 * 60_000
-// typical spot-minus-front-month-futures carry, used until a real basis is learned
-const DEFAULT_BASIS = -35
+// Typical spot-minus-front-month-futures carry while the near contract is a
+// few weeks from expiry. Used only until a real basis is learned from a true
+// spot quote (Swissquote / gold-api / Twelve Data). The old value (-35) put
+// the whole chart tens of dollars below spot whenever the true-spot feeds
+// were dark; the real carry right now is single digits.
+const DEFAULT_BASIS = -9
+// The basis between spot and front-month futures is small and one-signed in
+// practice (futures trade at a modest premium): clamp anything learned outside
+// this band, because a wild value means one of the two quotes was stale or
+// wrong (that is what used to poison the chart level).
+const BASIS_MIN = -80
+const BASIS_MAX = 10
+// Spot quotes that represent TRUE spot gold (safe to learn the futures basis
+// from). PAXG is deliberately excluded: its token premium/discount used to
+// teach the engine a wrong basis and silently re-level the whole chart.
+const TRUE_SPOT_SOURCES = new Set(['swissquote', 'gold-api', 'twelve-data'])
 
 const INTERVAL_CFG: Record<string, { yahoo: string; range: string; sec: number; twelve: string }> = {
   '1m': { yahoo: '1m', range: '2d', sec: 60, twelve: '1min' },
@@ -51,7 +70,7 @@ const INTERVAL_CFG: Record<string, { yahoo: string; range: string; sec: number; 
 // ── spot price state: multi-source, failover, freshness-tracked ──
 export interface GoldSpotState {
   price: number
-  source: 'gold-api' | 'twelve-data' | 'comex-anchored' | 'paxg-anchored'
+  source: 'swissquote' | 'gold-api' | 'twelve-data' | 'comex-anchored' | 'paxg-anchored'
   asOf: number // epoch ms when the underlying quote was made
   marketOpen: boolean
   stale: boolean // old data while the market is open (UI shows DELAYED)
@@ -64,10 +83,63 @@ const SPOT_TTL_MS = 8_000
 // shifts the whole chart to futures levels
 let lastKnownBasis: number | null = null
 
-// fallback quote caches (30s) so a down primary never hammers the fallbacks
+// fallback quote caches (short TTLs so a down primary never hammers fallbacks)
+let sqCache: { price: number; asOf: number; at: number } | null = null
 let comexCache: { price: number; asOf: number; at: number } | null = null
 let paxgCache: { price: number; asOf: number; at: number } | null = null
 let twelveCache: { price: number; asOf: number; at: number } | null = null
+
+/**
+ * Swissquote public BBO for XAU/USD: a real institutional spot bid/ask (their
+ * web charts run on this feed). Keyless, CORS-open, live timestamps. Cached
+ * ~12s so the 12s browser poll and the klines refresh never hammer it.
+ */
+async function fetchSwissquoteSpot(): Promise<{ price: number; asOf: number } | null> {
+  if (sqCache && Date.now() - sqCache.at < 12_000) return sqCache
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 7000)
+  try {
+    const res = await fetch(SWISSQUOTE_API, {
+      signal: ctrl.signal,
+      headers: { accept: 'application/json' },
+      cache: 'no-store',
+    })
+    if (!res.ok) return null
+    const json = await res.json()
+    const first = Array.isArray(json) ? json[0] : null
+    const profiles = first?.spreadProfilePrices
+    const ts = Number(first?.ts)
+    // pick the tightest quoted spread profile (elite/prime/premium order varies)
+    let bid: number | null = null
+    let ask: number | null = null
+    if (Array.isArray(profiles)) {
+      for (const p of profiles) {
+        const b = Number(p?.bid)
+        const a = Number(p?.ask)
+        if (Number.isFinite(b) && Number.isFinite(a) && b > 0 && a >= b) {
+          if (bid === null || ask === null || a - b < ask - bid) {
+            bid = b
+            ask = a
+          }
+        }
+      }
+    }
+    if (bid !== null && ask !== null) {
+      const price = (bid + ask) / 2
+      if (price > 500 && price < 20_000) {
+        const asOf = Number.isFinite(ts) && ts > 1.6e12 ? ts : Date.now()
+        const fresh = { price, asOf, at: Date.now() }
+        sqCache = fresh
+        return fresh
+      }
+    }
+    return null
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 async function fetchGoldApiSpot(timeoutMs: number): Promise<GoldSpotState | null> {
   const ctrl = new AbortController()
@@ -125,14 +197,27 @@ async function fetchTwelveSpot(): Promise<{ price: number; asOf: number } | null
   return twelveCache
 }
 
-/** Live COMEX front-month futures quote (Yahoo). Cached 30s. */
+/** Live COMEX front-month futures quote (Yahoo). Cached 20s. */
 async function fetchComexFutures(): Promise<{ price: number; asOf: number } | null> {
-  if (comexCache && Date.now() - comexCache.at < 30_000) return comexCache
+  if (comexCache && Date.now() - comexCache.at < 20_000) return comexCache
   try {
     const r = await yahooChart('1m', '1d', 7000)
     const m = r?.meta ?? {}
-    const price = Number(m.regularMarketPrice)
-    const asOfSec = Number(m.regularMarketTime)
+    // Prefer the freshest 1m bar close: Yahoo's meta.regularMarketPrice on
+    // futures often lags 10-15 minutes, while the chart bars update close to
+    // realtime. This keeps the comex-anchored fallback genuinely live.
+    const ts: number[] = Array.isArray(r?.timestamp) ? r.timestamp : []
+    const q = r?.indicators?.quote?.[0] ?? {}
+    let price = Number(m.regularMarketPrice)
+    let asOfSec = Number(m.regularMarketTime)
+    for (let i = ts.length - 1; i >= 0; i--) {
+      const c = Number(q?.close?.[i])
+      if (Number.isFinite(c) && c > 0) {
+        price = c
+        asOfSec = ts[i]
+        break
+      }
+    }
     if (Number.isFinite(price) && price > 0) {
       const fresh = { price, asOf: asOfSec > 0 ? asOfSec * 1000 : Date.now(), at: Date.now() }
       comexCache = fresh
@@ -157,11 +242,19 @@ async function fetchPaxgSpot(): Promise<{ price: number; asOf: number } | null> 
   return paxgCache
 }
 
+/** Learn the spot-minus-futures basis from a TRUE spot quote, clamped to sane carry. */
+function learnBasis(trueSpot: number, futuresLast: number) {
+  const b = trueSpot - futuresLast
+  if (!Number.isFinite(b)) return
+  lastKnownBasis = Math.min(BASIS_MAX, Math.max(BASIS_MIN, b))
+}
+
 /**
- * True spot XAU/USD with source + freshness. Tries gold-api first; if it is
- * unreachable (or serving an old quote while the market is open) it derives a
- * live price from COMEX futures minus the tracked basis, and finally from the
- * PAXG token. Never throws; returns null only when every source is dark.
+ * True spot XAU/USD with source + freshness. Tries Swissquote first (live
+ * institutional BBO); if it is unreachable it tries gold-api, Twelve Data,
+ * then derives a live price from COMEX futures minus the tracked basis, and
+ * finally from the PAXG token. Never throws; returns null only when every
+ * source is dark.
  */
 export async function fetchGoldSpotState(timeoutMs = 8000): Promise<GoldSpotState | null> {
   const now = Date.now()
@@ -172,11 +265,26 @@ export async function fetchGoldSpotState(timeoutMs = 8000): Promise<GoldSpotStat
   if (spotState && now - spotFetchedAt < SPOT_TTL_MS) return spotState
   spotFetchedAt = now
 
+  // 1) Swissquote BBO: true spot, live timestamps. While the market is closed
+  //    the quote holds Friday's close (exactly like a broker), so age is fine
+  //    then; while open, require a fresh quote.
+  const sq = await fetchSwissquoteSpot()
+  if (sq && (!marketOpen || now - sq.asOf < STALE_AFTER_MS)) {
+    const state: GoldSpotState = {
+      price: sq.price,
+      source: 'swissquote',
+      asOf: sq.asOf,
+      marketOpen,
+      stale: marketOpen && now - sq.asOf > 90_000,
+    }
+    spotState = state
+    return state
+  }
+
+  // 2) gold-api (true spot). Fresh while the market is open; any age is the
+  //    freshest data that exists anywhere while closed (Friday's close).
   const primary = await fetchGoldApiSpot(timeoutMs)
   const primaryAge = primary ? now - primary.asOf : Infinity
-
-  // 1) gold-api while fresh, or any time the market is closed (Friday's close
-  //    is the freshest data that exists anywhere on a weekend)
   if (primary && (!marketOpen || primaryAge < STALE_AFTER_MS)) {
     primary.marketOpen = marketOpen
     primary.stale = marketOpen && primaryAge > 90_000
@@ -184,35 +292,28 @@ export async function fetchGoldSpotState(timeoutMs = 8000): Promise<GoldSpotStat
     return primary
   }
 
-  // 1.5) Twelve Data true spot when a key is configured (spares its quota:
-  //      only used while gold-api is dark)
-  if (!(primary && (!marketOpen || primaryAge < STALE_AFTER_MS))) {
-    const twelve = await fetchTwelveSpot()
-    if (twelve && (!marketOpen || now - twelve.asOf < STALE_AFTER_MS)) {
-      const state: GoldSpotState = {
-        price: twelve.price,
-        source: 'twelve-data',
-        asOf: twelve.asOf,
-        marketOpen,
-        stale: marketOpen && now - twelve.asOf > 90_000,
-      }
-      spotState = state
-      return state
+  // 3) Twelve Data true spot when a key is configured (spares its quota:
+  //    only used while both keyless true-spot feeds are dark)
+  const twelve = await fetchTwelveSpot()
+  if (twelve && (!marketOpen || now - twelve.asOf < STALE_AFTER_MS)) {
+    const state: GoldSpotState = {
+      price: twelve.price,
+      source: 'twelve-data',
+      asOf: twelve.asOf,
+      marketOpen,
+      stale: marketOpen && now - twelve.asOf > 90_000,
     }
+    spotState = state
+    return state
   }
 
-  // 2) COMEX futures minus the tracked basis: still moves tick for tick with
-  //    spot, so the price keeps updating while gold-api is dark
+  // 4) COMEX futures minus the tracked basis: still moves tick for tick with
+  //    spot, so the price keeps updating while the true-spot feeds are dark.
+  //    The basis is ONLY ever learned from a true-spot quote (see learnBasis);
+  //    PAXG no longer teaches it, because its token premium poisoned the level.
   const comex = await fetchComexFutures()
   if (comex) {
-    let basis = lastKnownBasis
-    if (primary) basis = primary.price - comex.price // freshest truth wins
-    if (basis == null) {
-      // PAXG teaches us the basis: token price sits at spot levels
-      const paxg = await fetchPaxgSpot()
-      if (paxg) basis = paxg.price - comex.price
-    }
-    const price = comex.price + (basis ?? DEFAULT_BASIS)
+    const price = comex.price + (lastKnownBasis ?? DEFAULT_BASIS)
     const age = now - comex.asOf
     const state: GoldSpotState = {
       price,
@@ -225,7 +326,7 @@ export async function fetchGoldSpotState(timeoutMs = 8000): Promise<GoldSpotStat
     return state
   }
 
-  // 3) PAXG token directly (24/7 real traded gold)
+  // 5) PAXG token directly (24/7 real traded gold; carries its own premium)
   const paxg = await fetchPaxgSpot()
   if (paxg) {
     const age = now - paxg.asOf
@@ -240,7 +341,7 @@ export async function fetchGoldSpotState(timeoutMs = 8000): Promise<GoldSpotStat
     return state
   }
 
-  // 4) a stale gold-api quote beats no data at all, but it must be labelled
+  // 6) a stale gold-api quote beats no data at all, but it must be labelled
   if (primary) {
     primary.marketOpen = marketOpen
     primary.stale = true
@@ -248,7 +349,7 @@ export async function fetchGoldSpotState(timeoutMs = 8000): Promise<GoldSpotStat
     return primary
   }
 
-  // 5) last known state for up to 12h (weekend freeze is handled by the
+  // 7) last known state for up to 12h (weekend freeze is handled by the
   //    market-closed flag, so this is a true outage case)
   if (spotState && now - spotState.asOf < 12 * 3_600_000) {
     spotState.marketOpen = marketOpen
@@ -414,7 +515,10 @@ async function fetchTwelveCandles(interval: string, limit: number): Promise<Cand
 /**
  * Spot-anchored gold candles. The fetched series is shifted by the live
  * (spot - last close) basis so the whole chart sits at true spot levels and
- * the last candle's close IS the live spot price.
+ * the last candle's close IS the live spot price. The basis is only learned
+ * from a true-spot quote (Swissquote / gold-api / Twelve Data) and clamped to
+ * a sane carry band, so a stale or token-premium quote can never silently
+ * re-level the chart again.
  */
 export async function fetchGoldKlines(_symbol: string, interval: string, limit = 300): Promise<Candle[]> {
   const cfg = INTERVAL_CFG[interval]
@@ -428,11 +532,13 @@ export async function fetchGoldKlines(_symbol: string, interval: string, limit =
   const marketClosed = isMetalClosed()
   if (hit && marketClosed && Date.now() - hit.at < STALE_SERVE_MS) return hit.candles.slice(-limit)
 
-  const spot = await fetchGoldSpot().catch(() => null)
+  const spotState = await fetchGoldSpotState().catch(() => null)
+  const spot = spotState ? spotState.price : null
+  const spotIsTrue = spotState ? TRUE_SPOT_SOURCES.has(spotState.source) : false
 
   const finish = (candles: Candle[], provenance: string): Candle[] => {
     const futuresLast = candles[candles.length - 1].close
-    if (spot !== null) lastKnownBasis = spot - futuresLast
+    if (spot !== null && spotIsTrue) learnBasis(spot, futuresLast)
     const basis = lastKnownBasis ?? DEFAULT_BASIS
     if (basis !== 0) {
       for (const k of candles) {

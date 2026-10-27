@@ -280,17 +280,29 @@ Give your professional verdict as the JSON object per the schema.`
     (fb.signal === 'LONG' && htf === 'bullish') || (fb.signal === 'SHORT' && htf === 'bearish')
   const fights =
     (fb.signal === 'LONG' && htf === 'bearish') || (fb.signal === 'SHORT' && htf === 'bullish')
+  // plan levels: entry at market, stop beyond structure, targets at R multiples.
+  // The displayed R:R is computed from these exact numbers (never a constant),
+  // so the plan's math always checks out against the chart.
+  const fbEntry = fb.signal === 'KEEP_OFF' ? null : snapshot.price
+  const fbStop = fb.signal === 'KEEP_OFF' ? null : computeFallbackStop(fb.signal, snapshot)
+  const fbTp1 = fb.signal === 'KEEP_OFF' ? null : computeFallbackTp(fb.signal, snapshot, 1.5)
+  const fbTp2 = fb.signal === 'KEEP_OFF' ? null : computeFallbackTp(fb.signal, snapshot, 2.5)
+  const fbRisk = fbEntry !== null && fbStop !== null ? Math.abs(fbEntry - fbStop) : 0
+  const fbRr =
+    fbEntry !== null && fbTp1 !== null && fbRisk > 0
+      ? Math.round((Math.abs(fbTp1 - fbEntry) / fbRisk) * 100) / 100
+      : null
   return {
     ai: {
       signal: fb.signal,
       confidence: fb.confidence,
       bias: fb.signal === 'LONG' ? 'bullish' : fb.signal === 'SHORT' ? 'bearish' : 'neutral',
-      entry: fb.signal === 'KEEP_OFF' ? null : snapshot.price,
+      entry: fbEntry,
       entryZone: null,
-      stopLoss: fb.signal === 'KEEP_OFF' ? null : computeFallbackStop(fb.signal, snapshot),
-      takeProfit1: fb.signal === 'KEEP_OFF' ? null : computeFallbackTp(fb.signal, snapshot, 1.5),
-      takeProfit2: fb.signal === 'KEEP_OFF' ? null : computeFallbackTp(fb.signal, snapshot, 2.5),
-      riskReward: 1.8,
+      stopLoss: fbStop,
+      takeProfit1: fbTp1,
+      takeProfit2: fbTp2,
+      riskReward: fbRr,
       timeHorizon: 'swing',
       validHours,
       tradeWindow:
@@ -313,7 +325,7 @@ Give your professional verdict as the JSON object per the schema.`
           : 'The rules engine matched this setup to a classic trend-continuation template: momentum in the trade direction, structure intact, and volatility room to the first target. When any leg of that tripod breaks, the trade stops working.',
       summary: `${meta.displaySymbol} ${snapshot.timeframe}: rules engine reads ${
         fb.signal === 'KEEP_OFF' ? 'mixed conditions, so stand aside' : fb.signal === 'LONG' ? 'bullish confluence' : 'bearish confluence'
-      }. (AI model unavailable, deterministic engine verdict.)`,
+      } (${fb.rationale.slice(0, 3).map((s) => s.replace(/\s*\(.*$/, '')).join('; ')}). (AI model offline, deterministic engine verdict.)`,
       rationale: fb.rationale,
       keyLevels: snapshot.keyLevels,
       invalidation:
@@ -429,15 +441,15 @@ export function sanitizeSignal(
     }
   }
 
-  let riskReward = Number(parsed.riskReward)
-  if (!Number.isFinite(riskReward) || riskReward <= 0 || riskReward > 20) {
-    if (entry !== null && stopLoss !== null && takeProfit1 !== null) {
-      const risk = Math.abs(entry - stopLoss)
-      riskReward = risk > 0 ? Math.abs(takeProfit1 - entry) / risk : null as any
-      if (!Number.isFinite(riskReward)) riskReward = null as any
-    } else {
-      riskReward = null as any
-    }
+  // R:R is ALWAYS recomputed from the final plan levels and never trusted from
+  // the model or the fallback: a self-reported number that disagrees with the
+  // plan's own entry/stop/target math is exactly the kind of inconsistency a
+  // professional eye catches immediately (the displayed R:R must equal the
+  // distance math you can verify on the chart).
+  let riskReward: number | null = null
+  if (entry !== null && stopLoss !== null && takeProfit1 !== null) {
+    const risk = Math.abs(entry - stopLoss)
+    if (risk > 0) riskReward = Math.round((Math.abs(takeProfit1 - entry) / risk) * 100) / 100
   }
 
   const rationale = Array.isArray(parsed.rationale)
